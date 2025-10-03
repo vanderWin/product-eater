@@ -137,10 +137,18 @@ st.subheader("Apply filters (optional)")
 
 filters = {}
 for col in keep_cols:
-    # Only show filter UI if column has few unique values
-    nunique = df[col].nunique(dropna=False)
+    # count unique non-empty values
+    series = df[col].astype(str).str.strip()
+    uniques = series[series.ne("")].unique()
+    nunique = len(uniques)
+
+    # skip if only one unique value
+    if nunique <= 1:
+        continue
+
+    # only show filter UI if the column has few unique values
     if nunique <= 50:  # adjust threshold if needed
-        options = sorted(df[col].dropna().unique().tolist())
+        options = sorted(uniques.tolist())
         chosen = st.multiselect(f"Filter {col}", options)
         if chosen:
             filters[col] = chosen
@@ -153,6 +161,7 @@ if filters:
     st.success(f"Applied {len(filters)} filter(s)")
 else:
     filtered = kept
+
 
 
 
@@ -190,62 +199,110 @@ else:
         "text/csv",
     )
 
-# ---- Colour mapping ----
+# ---- Colour mapping (case-normalised) ----
 st.subheader("Colour mapping")
 
-# path to your mapping file (adjust if needed)
-mapping_path = "colour_mapping.csv"
+# 1) choose source colour column
+colour_candidates = [c for c in ["generic_colour", "product_colour", "color", "colour"] if c in filtered.columns]
+if not colour_candidates:
+    st.info("No colour column found in selected columns. Add one of: generic_colour, product_colour, color, colour.")
+    st.stop()
+colour_col = st.selectbox("Source colour column for mapping", options=colour_candidates, index=0)
 
+# 2) load mapping and normalise to lowercase
+mapping_path = "colour_mapping.csv"
 try:
-    colour_map = pd.read_csv(mapping_path, dtype=str).fillna("")
+    colour_map = pd.read_csv(mapping_path, dtype=str)
 except Exception as e:
     st.error(f"Could not load colour mapping file: {e}")
     st.stop()
 
-# ensure expected columns exist
-if not {"product_colour", "generic_colour"}.issubset(colour_map.columns.str.lower()):
+need_cols = {"product_colour", "generic_colour"}
+if not need_cols.issubset({c.lower() for c in colour_map.columns}):
     st.error("Mapping file must contain columns: product_colour, generic_colour")
+    st.stop()
+
+colour_map = colour_map.rename(columns={c: c.lower() for c in colour_map.columns})[["product_colour","generic_colour"]]
+colour_map = (colour_map
+              .assign(product_colour=lambda d: d["product_colour"].astype(str).str.strip().str.lower(),
+                      generic_colour=lambda d: d["generic_colour"].astype(str).str.strip().str.lower())
+              .drop_duplicates(subset=["product_colour"]))
+
+# 3) normalise source data to lowercase for matching
+data = filtered.copy()
+data["_src_colour_norm"] = data[colour_col].astype(str).str.strip().str.lower()
+
+# 4) merge to see mapped vs unmapped
+merged = data.merge(colour_map, how="left", left_on="_src_colour_norm", right_on="product_colour")
+mapped_rows = merged["generic_colour"].notna().sum()
+pct_mapped = round(mapped_rows / len(merged) * 100, 2)
+st.metric("Products mapped to generic colour", f"{mapped_rows:,} / {len(merged):,}", f"{pct_mapped}%")
+
+# 5) table of unmapped colours with counts (explicit names avoid KeyError)
+unmapped_series = merged.loc[merged["generic_colour"].isna(), "_src_colour_norm"].replace("", pd.NA).dropna()
+unmapped_table = (unmapped_series
+                  .rename("Unmapped Colour")
+                  .value_counts()
+                  .rename_axis("Unmapped Colour")
+                  .reset_index(name="Product Count"))
+
+if unmapped_table.empty:
+    st.success("All colours are mapped.")
+    updated_map = colour_map.copy()
 else:
-    # standardise column names
-    colour_map = colour_map.rename(columns={c.lower(): c for c in colour_map.columns})
-    colour_col = st.selectbox(
-        "Source colour column for mapping",
-        options=[c for c in ["generic_colour", "product_colour", "color", "colour"] if c in filtered.columns],
-        index=0,
+    st.subheader("Map unmapped colours")
+
+    # allowed target set from mapping file (lowercase, approved list)
+    allowed_generic = sorted(colour_map["generic_colour"].dropna().unique().tolist())
+
+    # add editable column with explicit name to avoid index errors
+    unmapped_table["Map to generic colour"] = ""
+
+    edited = st.data_editor(
+        unmapped_table,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Unmapped Colour": st.column_config.TextColumn(disabled=True, width="large"),
+            "Product Count": st.column_config.NumberColumn(disabled=True),
+            "Map to generic colour": st.column_config.SelectboxColumn(
+                options=allowed_generic, required=False, width="medium"
+            ),
+        },
+        num_rows="fixed",
     )
 
-    merged = filtered.merge(
-        colour_map,
-        how="left",
-        left_on=colour_col,
-        right_on="product_colour"
+    # build new rows from selections
+    new_rows = (
+        edited.loc[edited["Map to generic colour"].astype(str).str.strip() != "",
+                   ["Unmapped Colour", "Map to generic colour"]]
+        .rename(columns={"Unmapped Colour": "product_colour",
+                         "Map to generic colour": "generic_colour"})
+        .assign(product_colour=lambda d: d["product_colour"].astype(str).str.strip().str.lower(),
+                generic_colour=lambda d: d["generic_colour"].astype(str).str.strip().str.lower())
+        .drop_duplicates(subset=["product_colour"])
     )
 
-    mapped_rows = merged["generic_colour"].notna().sum()
-    total_rows = len(merged)
-    pct_mapped = round(mapped_rows / total_rows * 100, 2)
-
-    st.metric("Products mapped to generic colour", f"{mapped_rows:,} / {total_rows:,}", f"{pct_mapped}%")
-
-    # list unmapped colours with counts
-    unmapped = (
-        merged.loc[merged["generic_colour"].isna(), colour_col]
-        .value_counts()
-        .reset_index()
-        .rename(columns={"index": "Unmapped Colour", colour_col: "Product Count"})
+    updated_map = pd.concat([new_rows, colour_map], ignore_index=True).drop_duplicates(
+        subset=["product_colour"], keep="first"
     )
 
-    if not unmapped.empty:
-        st.subheader("Unmapped colours")
-        st.dataframe(unmapped, use_container_width=True)
-        st.download_button(
-            "Download unmapped colours CSV",
-            unmapped.to_csv(index=False).encode("utf-8"),
-            "unmapped_colours.csv",
-            "text/csv",
-        )
-    else:
-        st.success("All colours are mapped.")
+    st.download_button(
+        "Download updated colour_mapping.csv",
+        updated_map.to_csv(index=False).encode("utf-8"),
+        "updated_colour_mapping.csv",
+        "text/csv",
+    )
+
+# 6) apply updated mapping to produce mapped output and coverage after edits
+applied = data.merge(updated_map, how="left", left_on="_src_colour_norm", right_on="product_colour")
+mapped_rows_after = applied["generic_colour"].notna().sum()
+pct_mapped_after = round(mapped_rows_after / len(applied) * 100, 2)
+st.metric("Products mapped after edits", f"{mapped_rows_after:,} / {len(applied):,}", f"{pct_mapped_after}%")
+
+# expose mapped output (keeps lowercase generic colours)
+mapped_output = applied.drop(columns=["_src_colour_norm", "product_colour"])
+
 
 
 st.download_button(
