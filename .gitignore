@@ -205,3 +205,13 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+# Streamlit local secrets
+.streamlit/secrets.toml
+
+# Google Ads & OAuth
+google-ads.yaml
+client_secret_*.json
+*.service_account.json
+*.oauth.json
