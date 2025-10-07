@@ -469,12 +469,29 @@ per_list_tables = []
 def make_keywords(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     if not cols:
         return pd.DataFrame(columns=["keyword", "Product Count"])
+
     sub = df[cols].copy()
-    lower = sub.apply(lambda c: c.astype(str).str.strip().str.lower())
-    INVALIDS = {"", "nan", "none", "null"}
-    valid_mask = (~lower.isin(INVALIDS)).all(axis=1)
-    s = lower[valid_mask].apply(lambda row: " ".join(row.values), axis=1)
-    return s.value_counts().rename_axis("keyword").reset_index(name="Product Count")
+
+    # clean nulls BEFORE string cast; then normalise
+    for c in cols:
+        sub[c] = sub[c].where(sub[c].notna(), "")  # pd.NA/NaN/None -> ""
+        sub[c] = sub[c].astype(str).str.strip().str.lower()
+
+    # drop literal "<na>" that comes from pandas StringDtype
+    sub = sub.replace({"<na>": ""})
+
+    INVALIDS = {"", "nan", "none", "null", "<na>"}
+    valid_mask = (~sub.isin(INVALIDS)).all(axis=1)
+
+    if not valid_mask.any():
+        return pd.DataFrame(columns=["keyword", "Product Count"])
+
+    s = sub.loc[valid_mask].apply(lambda row: " ".join(row.values), axis=1)
+    s = s.str.replace(r"\s+", " ", regex=True).str.strip()  # tidy spacing
+
+    out = s.value_counts()
+    return out.rename_axis("keyword").reset_index(name="Product Count")
+
 
 for i, combo in enumerate(st.session_state.combos):
     c = st.container(border=True)
