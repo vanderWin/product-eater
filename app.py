@@ -772,6 +772,104 @@ def render_gads_results(combined_df: pd.DataFrame):
         )
 
 render_gads_results(combined_df)
+# ==== Search volume charts (after Google Ads results) ====
+st.subheader("Search volume charts")
+
+gdf = st.session_state.get("gads_results_df")
+if gdf is None or gdf.empty or combined_df.empty:
+    st.info("Fetch Google Ads volumes first to plot charts.")
+else:
+    # join to get list_name on each keyword/month
+    left = combined_df.assign(keyword_norm=combined_df["keyword"].str.lower().str.strip())
+    fv = (
+        left.merge(gdf, on="keyword_norm", how="left")
+            .dropna(subset=["year","month","monthly_searches"])
+    )
+
+    # month date for x-axis
+    fv["date"] = pd.to_datetime(dict(year=fv["year"].astype(int),
+                                     month=fv["month"].astype(int), day=1))
+
+    # choose lists
+    totals = (
+        fv.groupby("list_name", as_index=False)["monthly_searches"].sum()
+          .sort_values("monthly_searches", ascending=False)
+    )
+    default_lists = totals["list_name"].head(6).tolist()
+    chosen_lists = st.multiselect("Lists to plot", totals["list_name"].tolist(), default_lists)
+    fv = fv[fv["list_name"].isin(chosen_lists)] if chosen_lists else fv
+    legend_sort = chosen_lists if chosen_lists else totals["list_name"].tolist()
+
+    import altair as alt
+    PALETTE = ["#F8F3DA", "#00E5FF", "#FF6B6B", "#FFD166", "#06D6A0", "#A66CFF", "#4D96FF"]
+
+    # ---------- Chart 1: chronological, MMM ’YY ticks, smoothed ----------
+    chron = (
+        fv.groupby(["list_name","date"], as_index=False)["monthly_searches"].sum()
+          .sort_values("date")
+    )
+
+    c1 = (
+        alt.Chart(chron)
+        .mark_line(point=True, strokeWidth=2, interpolate="monotone")
+        .encode(
+            x=alt.X("yearmonth(date):T", title="Month",
+                    axis=alt.Axis(format="%b '%y")),
+            y=alt.Y("monthly_searches:Q", title="Total searches",
+                    axis=alt.Axis(format="~s")),
+            color=alt.Color("list_name:N", title="List",
+                            scale=alt.Scale(range=PALETTE), sort=legend_sort),
+            tooltip=[
+                "list_name",
+                alt.Tooltip("yearmonth(date):T", title="Month"),
+                alt.Tooltip("monthly_searches:Q", title="Searches", format="~s"),
+            ],
+        )
+        .properties(title="Chronological search volume", width="container", height=320)
+        .configure_axis(grid=False, labelColor="#F8F3DA", titleColor="#F8F3DA")
+        .configure_legend(labelColor="#F8F3DA", titleColor="#F8F3DA")
+        .configure_view(strokeWidth=0, fill="transparent")
+    )
+    st.altair_chart(c1, theme=None, use_container_width=True)
+
+    # ---------- Chart 2: seasonality normalised to 0–100% per list, smoothed ----------
+    month_order = ["January","February","March","April","May","June",
+                   "July","August","September","October","November","December"]
+    fv["month_name"] = pd.Categorical(fv["date"].dt.month_name(),
+                                      categories=month_order, ordered=True)
+
+    season = (
+        fv.groupby(["list_name","month_name"], as_index=False)["monthly_searches"].sum()
+          .dropna(subset=["month_name"])
+          .sort_values(["list_name","month_name"])
+    )
+    denom = season.groupby("list_name")["monthly_searches"].transform("max").clip(lower=1)
+    season["frac_of_peak"] = season["monthly_searches"] / denom
+
+    c2 = (
+        alt.Chart(season)
+        .mark_line(point=True, strokeWidth=2, interpolate="monotone")
+        .encode(
+            x=alt.X("month_name:O", sort=month_order, title="Month (Jan→Dec)"),
+            y=alt.Y("frac_of_peak:Q", title="Seasonality",
+                    scale=alt.Scale(domain=[0,1]),
+                    axis=alt.Axis(format=".0%", values=[0,0.2,0.4,0.6,0.8,1])),
+            color=alt.Color("list_name:N", title="List",
+                            scale=alt.Scale(range=PALETTE), sort=legend_sort),
+            tooltip=[
+                "list_name",
+                "month_name",
+                alt.Tooltip("frac_of_peak:Q", title="% of peak", format=".0%"),
+            ],
+        )
+        .properties(title="Seasonality by list (normalised)", width="container", height=320)
+        .configure_axis(grid=False, labelColor="#F8F3DA", titleColor="#F8F3DA")
+        .configure_legend(labelColor="#F8F3DA", titleColor="#F8F3DA")
+        .configure_view(strokeWidth=0, fill="transparent")
+    )
+    st.altair_chart(c2, theme=None, use_container_width=True)
+
+
 
 # ===== Centered footer (replaces sidebar logo & copyright) =====
 import base64, mimetypes, datetime, os
