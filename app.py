@@ -2,7 +2,10 @@
 import re
 import pandas as pd
 import streamlit as st
-
+import datetime
+from pathlib import Path
+import yaml
+from typing import Tuple
 
 st.markdown("""
 <style>
@@ -12,9 +15,44 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Global CSS: style all download buttons (minimal change)
+st.markdown("""
+<style>
+div[data-testid="stDownloadButton"] > button {
+  background:#E859FF; color:#fff; border:1px solid #E859FF;
+}
+div[data-testid="stDownloadButton"] > button:hover {
+  filter: brightness(0.92);
+}
+</style>
+""", unsafe_allow_html=True)
 
-st.set_page_config(page_title="TSV Preview & Column Picker", layout="wide")
-st.title("TSV Preview & Column Picker")
+# Danger button markdown
+st.markdown("""
+<style>
+.danger-scope { --primary-color:#d9534f; }          /* bg */
+.danger-scope [data-testid="baseButton-primary"] {   /* text contrast */
+  color:#fff !important;
+  border-color:#d9534f !important;
+}
+.danger-scope [data-testid="baseButton-primary"]:hover {
+  filter:brightness(0.92);
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+st.set_page_config(page_title="Product Feed Eater 📎", page_icon="favicon.png", layout="wide")
+
+st.title("Product Feed Eater 📎")
+st.markdown("""
+<p>This tool cleans and standardises product data from exported feeds.<br>
+Upload a TSV or CSV, preview your columns, normalise key attributes, and download a refined dataset.</p>
+""", unsafe_allow_html=True)
+
+
+st.header("TSV Preview & Column Picker")
+
 
 
 
@@ -88,8 +126,6 @@ schema = pd.DataFrame({
     "unique": [df[c].nunique(dropna=False) for c in df.columns],
 })
 
-# with st.expander("Schema"):
-#     st.dataframe(schema, use_container_width=True)
 
 # --- Selection state (persist across edits) ---
 if "keep_map" not in st.session_state:
@@ -150,7 +186,7 @@ picker_df = schema.assign(keep=schema["column"].map(st.session_state.keep_map))[
 edited = st.data_editor(
     picker_df,
     hide_index=True,
-    use_container_width=True,
+    width="stretch",
     column_config={
         "keep": st.column_config.CheckboxColumn("keep"),
         "column": st.column_config.TextColumn("column", width="large", disabled=True),
@@ -205,7 +241,7 @@ else:
 
 # --- Output preview + download ---
 st.write(f"Keeping {len(filtered)} rows and {len(keep_cols)} column(s).")
-st.dataframe(filtered.head(preview_rows), use_container_width=True, height=400)
+st.dataframe(filtered.head(preview_rows), width="stretch", height=400)
 
 # ---- Colour summary ----
 st.subheader("Colour summary")
@@ -227,7 +263,7 @@ else:
     )
     vc["% of Products"] = (vc["Product Count"] / non_empty * 100).round(2)
 
-    st.dataframe(vc, use_container_width=True)
+    st.dataframe(vc, width="stretch")
     st.caption(f"Non-empty colours: {non_empty:,} rows.")
 
     st.download_button(
@@ -240,107 +276,96 @@ else:
 # ---- Colour mapping (case-normalised) ----
 st.subheader("Colour mapping")
 
-# 1) choose source colour column
 colour_candidates = [c for c in ["generic_colour", "product_colour", "color", "colour"] if c in filtered.columns]
-if not colour_candidates:
-    st.info("No colour column found in selected columns. Add one of: generic_colour, product_colour, color, colour.")
-    st.stop()
-colour_col = st.selectbox("Source colour column for mapping", options=colour_candidates, index=0)
+has_colour = bool(colour_candidates)
 
-# 2) load mapping and normalise
-mapping_path = "colour_mapping.csv"
-try:
-    colour_map = pd.read_csv(mapping_path, dtype=str)
-except Exception as e:
-    st.error(f"Could not load colour mapping file: {e}")
-    st.stop()
-
-need_cols = {"product_colour", "generic_colour"}
-if not need_cols.issubset({c.lower() for c in colour_map.columns}):
-    st.error("Mapping file must contain columns: product_colour, generic_colour")
-    st.stop()
-
-colour_map = (colour_map.rename(columns={c: c.lower() for c in colour_map.columns})[["product_colour","generic_colour"]]
-             .assign(product_colour=lambda d: d["product_colour"].astype(str).str.strip().str.lower(),
-                     generic_colour=lambda d: d["generic_colour"].astype(str).str.strip().str.lower())
-             .drop_duplicates(subset=["product_colour"]))
-
-# 3) normalise source data
-data = filtered.copy()
-data["_src_colour_norm"] = data[colour_col].astype(str).str.strip().str.lower()
-
-# 4) current state from existing map
-merged = data.merge(colour_map, how="left", left_on="_src_colour_norm", right_on="product_colour")
-eligible_now = merged["_src_colour_norm"].astype(str).str.strip().ne("")
-unmapped_now = (merged.loc[merged["generic_colour"].isna() & eligible_now, "_src_colour_norm"]
-                .value_counts().rename_axis("Unmapped Colour").reset_index(name="Product Count"))
-
-# header + metric placeholders (will render above the editor)
-st.subheader("Map unmapped colours")
-metric_slot = st.empty()
-
-# 5) editor
-if unmapped_now.empty:
-    updated_map = colour_map.copy()
-    metric_slot.metric("Products currently unmapped", "0 / 0", "0%")
-    st.success("All colours are mapped.")
+if not has_colour:
+    st.info("No colour column found. Skipping mapping. You can still extract categories and build keyword combinations.")
+    mapped_output = filtered.copy()
 else:
-    allowed_generic = sorted(colour_map["generic_colour"].dropna().unique().tolist())
-    unmapped_now["Map to generic colour"] = ""
-    edited = st.data_editor(
-        unmapped_now,
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Unmapped Colour": st.column_config.TextColumn(disabled=True, width="large"),
-            "Product Count": st.column_config.NumberColumn(disabled=True),
-            "Map to generic colour": st.column_config.SelectboxColumn(options=allowed_generic, required=False, width="medium"),
-        },
-        num_rows="fixed",
-        key="map_editor",
-    )
+    colour_col = st.selectbox("Source colour column for mapping", options=colour_candidates, index=0)
 
-    # combine current selections with the existing map
-    new_rows = (
-        edited.loc[edited["Map to generic colour"].astype(str).str.strip() != "",
-                   ["Unmapped Colour", "Map to generic colour"]]
-        .rename(columns={"Unmapped Colour": "product_colour",
-                         "Map to generic colour": "generic_colour"})
-        .assign(product_colour=lambda d: d["product_colour"].astype(str).str.strip().str.lower(),
-                generic_colour=lambda d: d["generic_colour"].astype(str).str.strip().str.lower())
-        .drop_duplicates(subset=["product_colour"])
-    )
-    updated_map = pd.concat([new_rows, colour_map], ignore_index=True)\
-                    .drop_duplicates(subset=["product_colour"], keep="first")
+    mapping_path = "colour_mapping.csv"
+    try:
+        colour_map = pd.read_csv(mapping_path, dtype=str)
+    except Exception as e:
+        st.error(f"Could not load colour mapping file: {e}")
+        mapped_output = filtered.copy()
+    else:
+        need_cols = {"product_colour", "generic_colour"}
+        if not need_cols.issubset({c.lower() for c in colour_map.columns}):
+            st.error("Mapping file must contain columns: product_colour, generic_colour")
+            mapped_output = filtered.copy()
+        else:
+            colour_map = (colour_map.rename(columns={c: c.lower() for c in colour_map.columns})[["product_colour","generic_colour"]]
+                         .assign(product_colour=lambda d: d["product_colour"].astype(str).str.strip().str.lower(),
+                                 generic_colour=lambda d: d["generic_colour"].astype(str).str.strip().str.lower())
+                         .drop_duplicates(subset=["product_colour"]))
 
-    # live metric computed from UPDATED map
-    applied = data.merge(updated_map, how="left", left_on="_src_colour_norm", right_on="product_colour")
-    eligible_after = applied["_src_colour_norm"].astype(str).str.strip().ne("")
-    eligible_after_count = int(eligible_after.sum())
-    mapped_after_count = int((applied["generic_colour"].notna() & eligible_after).sum())
-    pct_mapped = round(mapped_after_count / eligible_after_count * 100, 2) if eligible_after_count else 0.0
+            data = filtered.copy()
+            data["_src_colour_norm"] = data[colour_col].astype(str).str.strip().str.lower()
 
-    # no delta argument -> no arrow
-    metric_slot.metric(
-        "Products currently mapped",
-        f"🌈 {pct_mapped}% ({mapped_after_count:,} / {eligible_after_count:,})"
-    )
+            merged = data.merge(colour_map, how="left", left_on="_src_colour_norm", right_on="product_colour")
+            eligible_now = merged["_src_colour_norm"].astype(str).str.strip().ne("")
+            unmapped_now = (merged.loc[merged["generic_colour"].isna() & eligible_now, "_src_colour_norm"]
+                            .value_counts().rename_axis("Unmapped Colour").reset_index(name="Product Count"))
 
+            st.subheader("Map unmapped colours")
+            metric_slot = st.empty()
 
-    st.download_button(
-        "Download updated colour_mapping.csv",
-        updated_map.to_csv(index=False).encode("utf-8"),
-        "updated_colour_mapping.csv",
-        "text/csv",
-    )
+            if unmapped_now.empty:
+                updated_map = colour_map.copy()
+                metric_slot.metric("Products currently unmapped", "0 / 0", "0%")
+                st.success("All colours are mapped.")
+            else:
+                allowed_generic = sorted(colour_map["generic_colour"].dropna().unique().tolist())
+                unmapped_now["Map to generic colour"] = ""
+                edited = st.data_editor(
+                    unmapped_now,
+                    hide_index=True,
+                    width="stretch",
+                    column_config={
+                        "Unmapped Colour": st.column_config.TextColumn(disabled=True, width="large"),
+                        "Product Count": st.column_config.NumberColumn(disabled=True),
+                        "Map to generic colour": st.column_config.SelectboxColumn(options=allowed_generic, required=False, width="medium"),
+                    },
+                    num_rows="fixed",
+                    key="map_editor",
+                )
 
-# optional mapped output with updated map
-applied = data.merge(updated_map, how="left", left_on="_src_colour_norm", right_on="product_colour")
-mapped_output = applied.drop(columns=["_src_colour_norm", "product_colour"])
-# sync any precomputed helpers into mapped_output
-for aux_col in ["normalised_gender", "main_category", "final_category"]:
-    if aux_col in filtered.columns:
-        mapped_output[aux_col] = filtered[aux_col].values
+                new_rows = (
+                    edited.loc[edited["Map to generic colour"].astype(str).str.strip() != "",
+                               ["Unmapped Colour", "Map to generic colour"]]
+                    .rename(columns={"Unmapped Colour": "product_colour",
+                                     "Map to generic colour": "generic_colour"})
+                    .assign(product_colour=lambda d: d["product_colour"].astype(str).str.strip().str.lower(),
+                            generic_colour=lambda d: d["generic_colour"].astype(str).str.strip().str.lower())
+                    .drop_duplicates(subset=["product_colour"])
+                )
+                updated_map = pd.concat([new_rows, colour_map], ignore_index=True)\
+                                .drop_duplicates(subset=["product_colour"], keep="first")
+
+                applied = data.merge(updated_map, how="left", left_on="_src_colour_norm", right_on="product_colour")
+                eligible_after = applied["_src_colour_norm"].astype(str).str.strip().ne("")
+                eligible_after_count = int(eligible_after.sum())
+                mapped_after_count = int((applied["generic_colour"].notna() & eligible_after).sum())
+                pct_mapped = round(mapped_after_count / eligible_after_count * 100, 2) if eligible_after_count else 0.0
+
+                metric_slot.metric("Products currently mapped", f"🌈 {pct_mapped}% ({mapped_after_count:,} / {eligible_after_count:,})")
+
+                st.download_button(
+                    "Download updated colour_mapping.csv",
+                    updated_map.to_csv(index=False).encode("utf-8"),
+                    "updated_colour_mapping.csv",
+                    "text/csv",
+                )
+
+            applied = data.merge(updated_map, how="left", left_on="_src_colour_norm", right_on="product_colour")
+            mapped_output = applied.drop(columns=["_src_colour_norm", "product_colour"])
+            for aux_col in ["normalised_gender", "main_category", "final_category"]:
+                if aux_col in filtered.columns:
+                    mapped_output[aux_col] = filtered[aux_col].values
+
 
 
 # ==== Category extraction (auto via checkboxes, no button) ====
@@ -403,7 +428,21 @@ else:
 # ---- Working DF for keyword combos (after possible extraction) ----
 source_df = mapped_output if 'mapped_output' in locals() else filtered
 
+# ---- Normalised feed download (post-category extraction) ----
+tidy_df = mapped_output if 'mapped_output' in locals() else filtered
 
+st.subheader("Download normalised product feed")
+st.dataframe(tidy_df.head(preview_rows), width="stretch", height=320)
+st.download_button(
+    "Download normalised feed (CSV)",
+    tidy_df.to_csv(index=False).encode("utf-8"),
+    "normalised_feed.csv",
+    "text/csv",
+    key="dl_normalised_feed",
+)
+
+# visual separation before keyword tools
+st.divider()
 
 # ==== Keyword combinations (named, 1–3 dims, many combos) ====
 st.subheader("Keyword combinations")
@@ -496,6 +535,12 @@ combined_df = (
     pd.DataFrame(columns=["list_name","keyword","Product Count"])
 )
 
+
+
+# ---- Working DF for keyword combos (after possible extraction) ----
+source_df = tidy_df
+
+# Final section, keyword combos
 st.subheader("Combined keyword list")
 st.dataframe(combined_df.head(preview_rows), width="stretch", height=300)
 st.download_button(
@@ -508,57 +553,73 @@ st.download_button(
 # ==== Google Ads search volumes ====
 st.subheader("Google Ads search volumes")
 
-import yaml
-from typing import Tuple
+# ---- Keyword count indicator ----
+if "combined_df" in locals() and not combined_df.empty:
+    st.metric("Keywords to send to Google Ads API", f"{len(combined_df):,}")
+else:
+    st.info("No keyword combinations generated yet.")
 
+# ---- Auth helper (secrets OR local yaml) ----
 def _norm_id(x):
     return str(x).replace("-", "").strip() if x else ""
 
 def get_gads_client_and_customer_id() -> Tuple[object, str]:
-    """Prefer Streamlit Secrets in cloud. Fall back to local google-ads.yaml for dev."""
+    """Prefer Streamlit Secrets; safely fall back to local google-ads.yaml."""
     from google.ads.googleads.client import GoogleAdsClient
+    try:
+        has_secrets = "google_ads" in st.secrets
+    except Exception:
+        has_secrets = False
 
-    # --- Cloud: build from st.secrets["google_ads"] ---
-    if "google_ads" in st.secrets:
+    if has_secrets:
         s = st.secrets["google_ads"]
         cfg = {
             "developer_token": s["developer_token"],
             "client_id": s["client_id"],
             "client_secret": s["client_secret"],
             "refresh_token": s["refresh_token"],
-            # Optional fields supported by google-ads config:
             "login_customer_id": s.get("login_customer_id"),
             "client_customer_id": s.get("client_customer_id"),
             "use_proto_plus": True,
         }
-        # Remove Nones so yaml is clean
         cfg = {k: v for k, v in cfg.items() if v is not None}
         yaml_text = yaml.dump(cfg)
         client = GoogleAdsClient.load_from_string(yaml_text, version="v20")
         effective_id = _norm_id(s.get("client_customer_id")) or _norm_id(s.get("login_customer_id"))
         return client, effective_id
 
-    # --- Local dev: read google-ads.yaml next to app.py ---
-    yaml_path = "google-ads.yaml"
+    yaml_path = Path(__file__).parent / "google-ads.yaml"
+    if not yaml_path.exists():
+        st.error("No Streamlit secrets and no local google-ads.yaml found.")
+        return None, ""
+
     try:
         with open(yaml_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
-    except Exception:
-        st.error("No Streamlit secrets and could not read local google-ads.yaml.")
+        client = GoogleAdsClient.load_from_storage(str(yaml_path), version="v20")
+        effective_id = _norm_id(cfg.get("client_customer_id")) or _norm_id(cfg.get("login_customer_id"))
+        return client, effective_id
+    except Exception as e:
+        st.error(f"Failed to load Google Ads client from {yaml_path.name}: {e}")
         return None, ""
 
-    client = GoogleAdsClient.load_from_storage(yaml_path, version="v20")
-    effective_id = _norm_id(cfg.get("client_customer_id")) or _norm_id(cfg.get("login_customer_id"))
-    return client, effective_id
-
-# User-configurable ONLY for geo and language
-c2, c3 = st.columns([1,1])
+# ---- User inputs ----
+c2, c3, c4 = st.columns([1,1,0.6])
 with c2:
     geo_ids_str = st.text_input("Geo target IDs (comma)", value="2826", help="2826=UK, 2840=US")
 with c3:
     language_id = st.text_input("Language ID", value="1000", help="1000=English")
+with c4:
+    if st.button("Clear results"):
+        st.session_state.pop("gads_results_df", None)
+        st.session_state.pop("gads_raw_json", None)
+        st.session_state.pop("gads_results_key", None)
+        st.success("Cleared cached Google Ads results.")
 
-run_fetch = st.button("Fetch Google Ads volumes")
+# ---- Danger-styled fetch button ----
+st.markdown('<div style="--primary-color:#d9534f; --secondary-background-color:#b73f3b;">', unsafe_allow_html=True)
+run_fetch = st.button("Fetch Google Ads volumes", type="primary")
+st.markdown("</div>", unsafe_allow_html=True)
 
 def _parse_geo_ids(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
@@ -590,7 +651,6 @@ def fetch_historical_metrics_gads(client, customer_id: str, keywords: list[str],
 
         resp = idea_service.generate_keyword_historical_metrics(request=req)
 
-        # raw JSON log
         if MessageToDict:
             raw_results.extend([MessageToDict(r._pb) for r in resp.results])
         else:
@@ -602,7 +662,6 @@ def fetch_historical_metrics_gads(client, customer_id: str, keywords: list[str],
             canonical = r.text.lower().strip()
             variants = [v.lower().strip() for v in (list(r.close_variants) if r.close_variants else [])]
             aliases = [canonical] + [v for v in variants if v]
-
             base = {
                 "canonical_keyword": canonical,
                 "aliases": aliases,
@@ -613,12 +672,9 @@ def fetch_historical_metrics_gads(client, customer_id: str, keywords: list[str],
                 "low_top_of_page_bid_micros": int(m.low_top_of_page_bid_micros) if m.low_top_of_page_bid_micros is not None else None,
                 "high_top_of_page_bid_micros": int(m.high_top_of_page_bid_micros) if m.high_top_of_page_bid_micros is not None else None,
             }
-
             if getattr(m, "monthly_search_volumes", None):
                 for mv in m.monthly_search_volumes:
-                    month_name = mv.month.name
-                    month_num = ["JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE",
-                                 "JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"].index(month_name)+1
+                    month_num = ["JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE","JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"].index(mv.month.name)+1
                     out_rows.append(base | {"year": int(mv.year), "month": month_num,
                                             "monthly_searches": int(mv.monthly_searches) if mv.monthly_searches is not None else None})
             else:
@@ -633,6 +689,7 @@ def fetch_historical_metrics_gads(client, customer_id: str, keywords: list[str],
         df["keyword_norm"] = ""
     return df, raw_results
 
+# ---- Persist on fetch ----
 if run_fetch:
     if "combined_df" not in locals() or combined_df.empty:
         st.warning("Build a combined keyword list first.")
@@ -648,50 +705,95 @@ if run_fetch:
             cache_key = ("gads_v20_synonyms", tuple(sorted(to_query)), tuple(sorted(geo_ids)), language_id)
             if st.session_state.get("gads_results_key") != cache_key:
                 with st.spinner("Calling Google Ads API…"):
-                    gads_df, raw_json = fetch_historical_metrics_gads(
-                        client, effective_id, to_query, geo_ids, language_id
-                    )
+                    gads_df, raw_json = fetch_historical_metrics_gads(client, effective_id, to_query, geo_ids, language_id)
                 st.session_state.gads_results_key = cache_key
                 st.session_state.gads_results_df = gads_df
                 st.session_state.gads_raw_json = raw_json
-            else:
-                gads_df = st.session_state.gads_results_df
-                raw_json = st.session_state.get("gads_raw_json", [])
 
-            if gads_df.empty:
-                st.info("No metrics returned.")
-            else:
-                left = combined_df.assign(keyword_norm=combined_df["keyword"].str.lower().str.strip())
-                final_view = left.merge(gads_df, on="keyword_norm", how="left").drop(columns=["keyword_norm"])
-                final_view["exact_match"] = final_view["keyword"].str.lower().str.strip().eq(final_view.get("canonical_keyword",""))
-                final_view["matched_to"] = final_view.get("canonical_keyword","")
+# ---- Always render results if cached ----
+def render_gads_results(combined_df: pd.DataFrame):
+    gdf = st.session_state.get("gads_results_df")
+    if gdf is None or gdf.empty:
+        return
+    if combined_df is None or combined_df.empty:
+        return
 
-                ordered = [
-                    "list_name","keyword","Product Count",
-                    "avg_monthly_searches","competition_level","competition_index",
-                    "low_top_of_page_bid_micros","high_top_of_page_bid_micros",
-                    "year","month","monthly_searches",
-                    "exact_match","matched_to","close_variants"
-                ]
-                final_view = final_view[[c for c in ordered if c in final_view.columns] +
-                                        [c for c in final_view.columns if c not in ordered]]
+    left = combined_df.assign(keyword_norm=combined_df["keyword"].str.lower().str.strip())
+    final_view = left.merge(gdf, on="keyword_norm", how="left").drop(columns=["keyword_norm"])
+    final_view["exact_match"] = final_view["keyword"].str.lower().str.strip().eq(final_view.get("canonical_keyword",""))
+    final_view["matched_to"] = final_view.get("canonical_keyword","")
 
-                st.subheader("Keywords with Google Ads metrics")
-                st.dataframe(final_view.head(preview_rows), width="stretch", height=360)
-                st.download_button(
-                    "Download keywords + Google Ads metrics (CSV)",
-                    final_view.to_csv(index=False).encode("utf-8"),
-                    "keywords_with_gads_metrics.csv",
-                    "text/csv",
-                    key="dl_keywords_gads_unified"
-                )
+    ordered = [
+        "list_name","keyword","Product Count",
+        "avg_monthly_searches","competition_level","competition_index",
+        "low_top_of_page_bid_micros","high_top_of_page_bid_micros",
+        "year","month","monthly_searches",
+        "exact_match","matched_to","close_variants"
+    ]
+    final_view = final_view[[c for c in ordered if c in final_view.columns] +
+                            [c for c in final_view.columns if c not in ordered]]
 
-                if raw_json:
-                    import json
-                    st.download_button(
-                        "Download raw API JSON",
-                        json.dumps(raw_json, ensure_ascii=False, indent=2).encode("utf-8"),
-                        "gads_historical_metrics_raw.json",
-                        "application/json",
-                        key="dl_gads_raw_json"
-                    )
+    st.subheader("Keywords with Google Ads metrics")
+    st.dataframe(final_view.head(preview_rows), width="stretch", height=360)
+    st.download_button(
+        "Download keywords + Google Ads metrics (CSV)",
+        final_view.to_csv(index=False).encode("utf-8"),
+        "keywords_with_gads_metrics.csv",
+        "text/csv",
+        key="dl_keywords_gads_unified"
+    )
+
+    raw_json = st.session_state.get("gads_raw_json", [])
+    if raw_json:
+        import json
+        st.download_button(
+            "Download raw API JSON",
+            json.dumps(raw_json, ensure_ascii=False, indent=2).encode("utf-8"),
+            "gads_historical_metrics_raw.json",
+            "application/json",
+            key="dl_gads_raw_json"
+        )
+
+render_gads_results(combined_df)
+
+# ===== Centered footer (replaces sidebar logo & copyright) =====
+import base64, mimetypes, datetime, os
+from pathlib import Path
+
+def _data_uri_for_logo():
+    # try common locations / names
+    candidates = [
+        Path("logo.svg"), Path("logo.png"),
+        Path("static/logo.svg"), Path("static/logo.png")
+    ]
+    for p in candidates:
+        if p.exists():
+            mime = mimetypes.guess_type(p.name)[0] or "image/png"
+            b64 = base64.b64encode(p.read_bytes()).decode("utf-8")
+            return f"data:{mime};base64,{b64}"
+    return None  # fallback: no logo found
+
+def render_footer(bg="#2b0573", max_h=70):
+    current_year = datetime.datetime.now().year
+    logo_uri = _data_uri_for_logo()
+
+    img_html = (
+        f'<img src="{logo_uri}" style="max-height:{max_h}px; width:auto; margin-bottom:0px;" />'
+        if logo_uri else ""
+    )
+
+    st.markdown(
+        f"""
+        <div style="background:{bg}; padding:5px; text-align:center; margin-top:40px; border-radius:10px; ">
+            {img_html}
+            <div style="color:#fff; font-size:0.9em;">
+                &copy; {current_year}
+                <a href="https://www.journeyfurther.com/?utm_source=product-feed-eater&utm_medium=footer&utm_campaign=product-feed-eater"
+                   target="_blank" style="color:#fff; text-decoration:none;">Journey Further</a>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+render_footer()  # call at the very end of the script
