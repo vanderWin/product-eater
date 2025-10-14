@@ -73,7 +73,24 @@ except Exception as e:
     st.error(f"Failed to read file: {e}")
     st.stop()
 
-# --- Precompute: normalised_gender (case-insensitive detection) ---
+# === Product count notice (header row already excluded by pandas) ===
+# Prefer unique IDs if present; fall back to total rows.
+id_candidates = {"id", "item id", "item_id", "offer id", "offer_id"}
+id_col = next((c for c in df.columns if c.lower() in id_candidates), None)
+
+if id_col:
+    count_products = (
+        df[id_col].astype(str).str.strip().replace({"": pd.NA}).nunique(dropna=True)
+    )
+else:
+    count_products = len(df)
+
+msg = f"This file has {count_products:,} products in it"
+st.info(msg)
+st.toast(msg)
+
+
+# --- Precompute: age_gender_segment (case-insensitive detection) ---
 cols = {c.lower(): c for c in df.columns}
 g_col  = cols.get("gender")
 ag_col = cols.get("age group") or cols.get("age_group")
@@ -94,8 +111,23 @@ if g_col:
     norm = norm.mask(~kids & (g == "male"),   "mens")
     norm = norm.mask(~kids & (g == "female"), "womens")
 
-    df["normalised_gender"] = norm.fillna("")
+    df["age_gender_segment"] = norm.fillna("")
 
+# === Quick CSV export (post-upload, pre-preview) ===
+if df is not None and not df.empty:
+    try:
+        base_name = tsv_file.name
+        file_name = re.sub(r"\.tsv$", ".csv", base_name, flags=re.I)
+    except Exception:
+        file_name = "data.csv"
+
+    st.download_button(
+        "Download CSV version",
+        data=df.to_csv(index=False).encode("utf-8-sig"),
+        file_name=file_name,
+        mime="text/csv",
+        help="Export the uploaded data as CSV."
+    )
 
 # --- Helpers ---
 def norm(s: str) -> str:
@@ -109,120 +141,119 @@ norm_to_orig = {norm(c): c for c in df.columns}
 recommended_raw = [
     "title","availability","price","brand","gtin","mpn",
     "condition","language","age group","product type","gender","color",
-    "google product category","normalised_gender"
+    "google product category","age_gender_segment"
 ]
 
 recommended_norm = {norm(x) for x in recommended_raw}
+# NEW BLOCK FOR COLUMN PICKER STARTS HERE
+# === FIX 0: readable table text ===
+st.markdown("""
+<style>
+/* Make st.dataframe and st.data_editor text readable on dark backgrounds */
+div[data-testid="stDataFrame"] div[role="gridcell"],
+div[data-testid="stDataFrame"] thead div[role="columnheader"],
+div[data-testid="stDataEditor"] div[role="gridcell"],
+div[data-testid="stDataEditor"] thead div[role="columnheader"] {
+  color: #111 !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
-# --- Preview ---
-total_rows = len(df) - 1  # subtract header row
-st.subheader(f"Preview (of {total_rows:,} products)")
-st.dataframe(df.head(preview_rows), width="stretch", height=400)
+# === Column selector + preview (robust) ===
+st.subheader("Preview and Select Dimensions to Analyse")
 
-# --- Schema ---
-schema = pd.DataFrame({
-    "column": df.columns,
-    "non_empty": [df[c].ne("").sum() for c in df.columns],
-    "unique": [df[c].nunique(dropna=False) for c in df.columns],
-})
-
-
-# --- Selection state (persist across edits) ---
+# initialise keep_map once
 if "keep_map" not in st.session_state:
-    # default: select recommended present, else select "title" if present
-    initial = set()
-    for rn in recommended_norm:
+    # start all as False
+    initial = {c: False for c in df.columns}
+    # turn on recommended ones if provided
+    for rn in (recommended_norm or []):
         if rn in norm_to_orig:
-            initial.add(norm_to_orig[rn])
-    if not initial and "title" in df.columns:
-        initial.add("title")
-    st.session_state.keep_map = {c: (c in initial) for c in df.columns}
+            initial[norm_to_orig[rn]] = True
+    # if no recommended list, select all
+    if not any(initial.values()):
+        initial = {c: True for c in df.columns}
+    st.session_state.keep_map = initial
 
-# --- Quick-select controls ---
-st.subheader("Select columns to keep")
 
-def set_select_recommended():
+# quick actions
+qa1, qa2, qa3, qa4 = st.columns(4)
+if qa1.button("Select recommended"):
     sel = {c: False for c in df.columns}
-    for rn in recommended_norm:
+    for rn in (recommended_norm or []):
         if rn in norm_to_orig:
             sel[norm_to_orig[rn]] = True
     st.session_state.keep_map = sel
-
-def set_select_all():
+if qa2.button("Select all"):
     st.session_state.keep_map = {c: True for c in df.columns}
-
-def set_select_none():
+if qa3.button("Select none"):
     st.session_state.keep_map = {c: False for c in df.columns}
+if qa4.button("Invert selection"):
+    st.session_state.keep_map = {c: (not v) for c, v in st.session_state.keep_map.items()}
 
-def set_invert():
-    st.session_state.keep_map = {c: not v for c, v in st.session_state.keep_map.items()}
-
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    if st.button("Select recommended"):
-        set_select_recommended()
-with c2:
-    if st.button("Select all"):
-        set_select_all()
-with c3:
-    if st.button("Select none"):
-        set_select_none()
-with c4:
-    if st.button("Invert selection"):
-        set_invert()
-
-# Show which recommended fields are present/missing
-present = [norm_to_orig[rn] for rn in recommended_norm if rn in norm_to_orig]
-missing = [r for r in recommended_raw if norm(r) not in norm_to_orig]
-st.caption(f"Recommended present: {', '.join(present) if present else 'none'}")
-if missing:
-    st.caption(f"Recommended missing: {', '.join(missing)}")
-
-# --- Picker table with metrics ---
-picker_df = schema.assign(keep=schema["column"].map(st.session_state.keep_map))[
-    ["keep", "column", "non_empty", "unique"]
-]
+# build selector table
+sample_vals = df.head(1).astype(str).T.reset_index()
+sample_vals.columns = ["Column", "Example"]
+selector_df = pd.DataFrame({
+    "Keep": [bool(st.session_state.keep_map.get(c, False)) for c in df.columns],
+    "Column": df.columns,
+}).merge(sample_vals, on="Column", how="left")
 
 edited = st.data_editor(
-    picker_df,
+    selector_df,
     hide_index=True,
     width="stretch",
+    height=320,
     column_config={
-        "keep": st.column_config.CheckboxColumn("keep"),
-        "column": st.column_config.TextColumn("column", width="large", disabled=True),
-        "non_empty": st.column_config.NumberColumn("non_empty", help="Non-empty rows", disabled=True),
-        "unique": st.column_config.NumberColumn("unique", help="Distinct values (incl. empty)", disabled=True),
+        "Keep": st.column_config.CheckboxColumn("Keep", help="Tick to include this column"),
+        "Column": st.column_config.TextColumn("Column", disabled=True),
+        "Example": st.column_config.TextColumn("Example", disabled=True, width="medium"),
     },
-    num_rows="fixed",
+    disabled=["Column","Example"],
+    use_container_width=True,
+    key="col_selector_editor",
 )
 
-# sync state from editor
-st.session_state.keep_map = {row["column"]: bool(row["keep"]) for _, row in edited.iterrows()}
+# persist selection
+for _, r in edited.iterrows():
+    st.session_state.keep_map[r["Column"]] = bool(r["Keep"])
 
 keep_cols = [c for c, k in st.session_state.keep_map.items() if k]
-if not keep_cols:
-    st.warning("No columns selected.")
-    st.stop()
+st.caption(f"{len(keep_cols)} column(s) selected.")
 
-# define kept here
+# preview with horizontal scroll and URL clamping
+URL_KEYS = {"link", "image link", "additional image link", "mobile link"}
+col_cfg = {}
+for c in keep_cols:
+    if any(k in c.lower() for k in URL_KEYS):
+        col_cfg[c] = st.column_config.TextColumn(c, width="medium")
+
 kept = df[keep_cols].copy()
+st.dataframe(
+    kept.head(preview_rows),
+    width="stretch",
+    height=520,
+    column_config=col_cfg,  # long URLs truncated visually
+)
+
+
+# NEW BLOCK FOR COLUMN PICKER ENDS HERE
+
 
 # ---- Optional filters ----
 st.subheader("Apply filters (optional)")
 
 filters = {}
 for col in keep_cols:
-    # count unique non-empty values
-    series = df[col].astype(str).str.strip()
+    # build choices from the same table we preview/export
+    series = kept[col].astype(str).str.strip()
     uniques = series[series.ne("")].unique()
     nunique = len(uniques)
 
-    # skip if only one unique value
     if nunique <= 1:
         continue
 
-    # only show filter UI if the column has few unique values
-    if nunique <= 50:  # adjust threshold if needed
+    if nunique <= 50:
         options = sorted(uniques.tolist())
         chosen = st.multiselect(f"Filter {col}", options)
         if chosen:
@@ -237,8 +268,6 @@ if filters:
 else:
     filtered = kept
 
-
-
 # --- Output preview + download ---
 st.write(f"Keeping {len(filtered)} rows and {len(keep_cols)} column(s).")
 st.dataframe(filtered.head(preview_rows), width="stretch", height=400)
@@ -246,7 +275,6 @@ st.dataframe(filtered.head(preview_rows), width="stretch", height=400)
 # ---- Colour summary ----
 st.subheader("Colour summary")
 
-# auto-detect a colour column
 colour_candidates = [c for c in ["generic_colour", "product_colour", "color", "colour"] if c in filtered.columns]
 if not colour_candidates:
     st.info("No colour column found in selected columns. Add one of: generic_colour, product_colour, color, colour.")
@@ -273,7 +301,7 @@ else:
         "text/csv",
     )
 
-# ---- Colour mapping (case-normalised) ----
+# ---- Colour mapping (index-safe: use Series.map, not merge) ----
 st.subheader("Colour mapping")
 
 colour_candidates = [c for c in ["generic_colour", "product_colour", "color", "colour"] if c in filtered.columns]
@@ -297,18 +325,26 @@ else:
             st.error("Mapping file must contain columns: product_colour, generic_colour")
             mapped_output = filtered.copy()
         else:
-            colour_map = (colour_map.rename(columns={c: c.lower() for c in colour_map.columns})[["product_colour","generic_colour"]]
-                         .assign(product_colour=lambda d: d["product_colour"].astype(str).str.strip().str.lower(),
-                                 generic_colour=lambda d: d["generic_colour"].astype(str).str.strip().str.lower())
-                         .drop_duplicates(subset=["product_colour"]))
+            colour_map = (
+                colour_map.rename(columns={c: c.lower() for c in colour_map.columns})[["product_colour","generic_colour"]]
+                          .assign(product_colour=lambda d: d["product_colour"].astype(str).str.strip().str.lower(),
+                                  generic_colour=lambda d: d["generic_colour"].astype(str).str.strip().str.lower())
+                          .drop_duplicates(subset=["product_colour"])
+            )
 
+            # Prepare current data and a lookup that preserves order and index
             data = filtered.copy()
             data["_src_colour_norm"] = data[colour_col].astype(str).str.strip().str.lower()
 
-            merged = data.merge(colour_map, how="left", left_on="_src_colour_norm", right_on="product_colour")
-            eligible_now = merged["_src_colour_norm"].astype(str).str.strip().ne("")
-            unmapped_now = (merged.loc[merged["generic_colour"].isna() & eligible_now, "_src_colour_norm"]
-                            .value_counts().rename_axis("Unmapped Colour").reset_index(name="Product Count"))
+            # Current mapping coverage
+            lkp_now = colour_map.set_index("product_colour")["generic_colour"]
+            merged_now = data.assign(generic_colour=data["_src_colour_norm"].map(lkp_now))
+
+            eligible_now = merged_now["_src_colour_norm"].ne("")
+            unmapped_now = (
+                merged_now.loc[merged_now["generic_colour"].isna() & eligible_now, "_src_colour_norm"]
+                .value_counts().rename_axis("Unmapped Colour").reset_index(name="Product Count")
+            )
 
             st.subheader("Map unmapped colours")
             metric_slot = st.empty()
@@ -320,6 +356,7 @@ else:
             else:
                 allowed_generic = sorted(colour_map["generic_colour"].dropna().unique().tolist())
                 unmapped_now["Map to generic colour"] = ""
+
                 edited = st.data_editor(
                     unmapped_now,
                     hide_index=True,
@@ -342,11 +379,17 @@ else:
                             generic_colour=lambda d: d["generic_colour"].astype(str).str.strip().str.lower())
                     .drop_duplicates(subset=["product_colour"])
                 )
-                updated_map = pd.concat([new_rows, colour_map], ignore_index=True)\
-                                .drop_duplicates(subset=["product_colour"], keep="first")
 
-                applied = data.merge(updated_map, how="left", left_on="_src_colour_norm", right_on="product_colour")
-                eligible_after = applied["_src_colour_norm"].astype(str).str.strip().ne("")
+                updated_map = (
+                    pd.concat([new_rows, colour_map], ignore_index=True)
+                      .drop_duplicates(subset=["product_colour"], keep="first")
+                )
+
+                # Recompute mapped percentage using map, not merge
+                lkp_after = updated_map.set_index("product_colour")["generic_colour"]
+                applied = data.assign(generic_colour=data["_src_colour_norm"].map(lkp_after))
+
+                eligible_after = applied["_src_colour_norm"].ne("")
                 eligible_after_count = int(eligible_after.sum())
                 mapped_after_count = int((applied["generic_colour"].notna() & eligible_after).sum())
                 pct_mapped = round(mapped_after_count / eligible_after_count * 100, 2) if eligible_after_count else 0.0
@@ -360,18 +403,14 @@ else:
                     "text/csv",
                 )
 
-            applied = data.merge(updated_map, how="left", left_on="_src_colour_norm", right_on="product_colour")
-            mapped_output = applied.drop(columns=["_src_colour_norm", "product_colour"])
-            for aux_col in ["normalised_gender", "main_category", "final_category"]:
-                if aux_col in filtered.columns:
-                    mapped_output[aux_col] = filtered[aux_col].values
-
-
+            # Final mapped output. No positional overwrite of other fields.
+            lkp_final = updated_map.set_index("product_colour")["generic_colour"]
+            mapped_output = data.assign(generic_colour=data["_src_colour_norm"].map(lkp_final)) \
+                                .drop(columns=["_src_colour_norm"])
 
 # ==== Category extraction (auto via checkboxes, no button) ====
 st.subheader("Category extraction")
 
-# prefer taxonomy-like fields; fall back to any column
 candidates = [c for c in ["google product category", "product type"] if c in filtered.columns]
 default_col = candidates[0] if candidates else list(filtered.columns)[0]
 cat_src_col = st.selectbox(
@@ -391,7 +430,7 @@ parts = (
     .apply(lambda v: [p.strip() for p in re.split(r"\s*>\s*", v) if p.strip()])
 )
 
-# assign selected outputs
+# assign selected outputs on the filtered frame
 if want_main:
     filtered["main_category"] = parts.apply(lambda xs: (xs[0] if xs else "")).str.lower()
 else:
@@ -404,19 +443,20 @@ else:
     if "final_category" in filtered.columns:
         del filtered["final_category"]
 
-# mirror into mapped_output if present
+# mirror into mapped_output without reindexing or positional writes
 if 'mapped_output' in locals():
-    mapped_output = mapped_output.reindex(filtered.index)
-    if want_main:
-        mapped_output["main_category"] = filtered.get("main_category", "")
+    # main_category
+    if want_main and "main_category" in filtered.columns:
+        mapped_output["main_category"] = filtered["main_category"]
     else:
-        if "main_category" in mapped_output.columns:
-            del mapped_output["main_category"]
-    if want_final:
-        mapped_output["final_category"] = filtered.get("final_category", "")
+        mapped_output.drop(columns=["main_category"], inplace=True, errors="ignore")
+
+    # final_category
+    if want_final and "final_category" in filtered.columns:
+        mapped_output["final_category"] = filtered["final_category"]
     else:
-        if "final_category" in mapped_output.columns:
-            del mapped_output["final_category"]
+        mapped_output.drop(columns=["final_category"], inplace=True, errors="ignore")
+
 
 # preview only if any created
 preview_cols = [cat_src_col] + [c for c in ["main_category","final_category"] if c in filtered.columns]
@@ -424,9 +464,6 @@ if len(preview_cols) > 1:
     st.dataframe(filtered[preview_cols].head(preview_rows), width="stretch", height=280)
 else:
     st.caption("No category fields selected.")
-
-# ---- Working DF for keyword combos (after possible extraction) ----
-source_df = mapped_output if 'mapped_output' in locals() else filtered
 
 # ---- Normalised feed download (post-category extraction) ----
 tidy_df = mapped_output if 'mapped_output' in locals() else filtered
@@ -441,6 +478,7 @@ st.download_button(
     key="dl_normalised_feed",
 )
 
+###################################
 # visual separation before keyword tools
 st.divider()
 
