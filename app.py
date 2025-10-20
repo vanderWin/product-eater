@@ -1,11 +1,17 @@
 # app.py
+import io
 import re
+import hashlib
+import math
+import time
+import random
+import itertools
 import pandas as pd
 import streamlit as st
 import datetime
 from pathlib import Path
 import yaml
-from typing import Tuple
+from typing import Tuple, Optional
 
 st.markdown("""
 <style>
@@ -51,31 +57,163 @@ Upload a TSV or CSV, preview your columns, normalise key attributes, and downloa
 """, unsafe_allow_html=True)
 
 
-st.header("TSV Preview & Column Picker")
+# --- Cached IO helpers ---
+@st.cache_data(show_spinner=False)
+def _hash_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
+@st.cache_data(show_spinner=False)
+def _excel_sheet_names(data: bytes) -> Tuple[str, ...]:
+    xls = pd.ExcelFile(io.BytesIO(data), engine="openpyxl")
+    return tuple(xls.sheet_names)
 
 
-# --- Inputs ---
-tsv_file = st.file_uploader("Upload a Merchant Center TSV", type=["tsv", "txt"])
+@st.cache_data(show_spinner=True)
+def load_excel_bytes(file_bytes: bytes, sheet_name: str) -> pd.DataFrame:
+    xls = pd.ExcelFile(io.BytesIO(file_bytes), engine="openpyxl")
+    return pd.read_excel(
+        xls,
+        sheet_name=sheet_name,
+        dtype=str,
+        na_filter=False,
+        engine="openpyxl",
+    )
+
+
+@st.cache_data(show_spinner=True)
+def load_csv_like(file_bytes: bytes, sep: str) -> pd.DataFrame:
+    return pd.read_csv(
+        io.BytesIO(file_bytes),
+        sep=sep,
+        dtype=str,
+        na_filter=False,
+        low_memory=False,
+        on_bad_lines="skip",
+    )
+
+
+@st.cache_data(show_spinner=False)
+def to_csv_bytes(df: pd.DataFrame) -> bytes:
+    return df.to_csv(index=False).encode("utf-8-sig")
+
+
+# === Feed ingest (TSV / CSV / Excel) ===
+st.header("Feed Preview & Column Picker")
+
+uploaded_file = st.file_uploader(
+    "Upload a feed file (TSV, CSV, or Excel)",
+    type=["tsv", "txt", "csv", "xlsx", "xls"]
+)
+
 preview_rows = st.number_input("Preview rows", 1, 2000, 200, step=50)
-if not tsv_file:
-    st.info("Upload a TSV to begin.")
+
+if not uploaded_file:
+    st.info("Upload a TSV, CSV, or Excel file to begin.")
     st.stop()
 
-# --- Load TSV ---
+ext = Path(uploaded_file.name).suffix.lower()
+file_bytes = uploaded_file.getvalue()
+file_hash = _hash_bytes(file_bytes)
+file_sig = (uploaded_file.name, file_hash)
+
 try:
-    df = pd.read_csv(
-        tsv_file, sep="\t", dtype=str, na_filter=False,
-        low_memory=False, on_bad_lines="skip"
-    )
+    if ext in {".xlsx", ".xls"}:
+        try:
+            import openpyxl  # noqa
+        except ImportError:
+            st.error("Excel support requires `openpyxl`. "
+                     "Install it with:\n\npip install openpyxl")
+            st.stop()
+
+        sheet_options = _excel_sheet_names(file_bytes)
+        sheet_name = st.selectbox("Excel sheet", list(sheet_options), index=0)
+        df = load_excel_bytes(file_bytes, sheet_name).copy()
+
+    elif ext in {".tsv", ".txt"}:
+        df = load_csv_like(file_bytes, "\t").copy()
+
+    elif ext == ".csv":
+        df = load_csv_like(file_bytes, ",").copy()
+
+    else:
+        st.error(f"Unsupported file type: {ext}")
+        st.stop()
+
 except Exception as e:
     st.error(f"Failed to read file: {e}")
     st.stop()
 
-# === Product count notice (header row already excluded by pandas) ===
-# Prefer unique IDs if present; fall back to total rows.
-id_candidates = {"id", "item id", "item_id", "offer id", "offer_id"}
+# --- Normalise headers to safe strings ---
+df.columns = (pd.Index(df.columns)
+              .map(lambda x: str(x).strip())
+              .str.replace(r"\s+", " ", regex=True))
+
+# --- Precompute: age_gender_segment (robust) ---
+_cols = {c.lower(): c for c in df.columns}
+def _pick(*names):
+    for n in names:
+        c = _cols.get(n.lower())
+        if c:
+            return c
+    return None
+
+g_col  = _pick("gender", "sex", "target gender", "product gender")
+ag_col = _pick("age group", "age_group", "age", "target age", "age range")
+
+def safe_series(col):
+    if col and col in df.columns:
+        return df[col].astype(str).str.strip().str.lower()
+    return pd.Series("", index=df.index, dtype="string")
+
+g  = safe_series(g_col)
+ag = safe_series(ag_col)
+
+kids = (ag == "kids")
+age_gender_norm = pd.Series("", index=df.index, dtype="string")
+# kids → boys / girls / childrens
+age_gender_norm = age_gender_norm.mask(kids & (g == "male"),   "boys")
+age_gender_norm = age_gender_norm.mask(kids & (g == "female"), "girls")
+age_gender_norm = age_gender_norm.mask(kids & (g == "unisex"), "childrens")
+# adults → mens / womens ; unisex adults blank
+age_gender_norm = age_gender_norm.mask(~kids & (g == "male"),   "mens")
+age_gender_norm = age_gender_norm.mask(~kids & (g == "female"), "womens")
+
+df["age_gender_segment"] = age_gender_norm.fillna("")
+
+# Google-recommended fields for initial column selection
+recommended_raw = [
+    "title", "availability", "price", "brand", "gtin", "mpn",
+    "condition", "language", "age group", "product type", "gender", "color",
+    "google product category", "age_gender_segment",
+]
+
+# --- Reconcile keep_map with current file/schema ---
+schema_sig = (file_sig, tuple(df.columns))
+if st.session_state.get("keep_map_sig") != schema_sig:
+    # build fresh defaults for this file
+    initial = {c: False for c in df.columns}
+    # turn on recommended that actually exist
+    # norm_to_orig is defined below; build a temporary one here
+    _norm = lambda s: re.sub(r"[^a-z0-9]", "", str(s).lower())
+    _n2o = {_norm(c): c for c in df.columns}
+    for rn in {_norm(x) for x in recommended_raw}:
+        if rn in _n2o:
+            initial[_n2o[rn]] = True
+    if not any(initial.values()):  # fallback
+        initial = {c: True for c in df.columns}
+
+    st.session_state.keep_map = initial
+    st.session_state.keep_map_sig = schema_sig
+else:
+    # drop stale keys not in current df, add any new columns default False
+    current = {c: bool(st.session_state.keep_map.get(c, False)) for c in df.columns}
+    st.session_state.keep_map = current
+
+
+
+# === Product count notice ===
+id_candidates = {"id", "item id", "item_id", "offer id", "offer_id", "product_id"}
 id_col = next((c for c in df.columns if c.lower() in id_candidates), None)
 
 if id_col:
@@ -87,47 +225,27 @@ else:
 
 msg = f"This file has {count_products:,} products in it"
 st.info(msg)
-st.toast(msg)
-
-
-# --- Precompute: age_gender_segment (case-insensitive detection) ---
-cols = {c.lower(): c for c in df.columns}
-g_col  = cols.get("gender")
-ag_col = cols.get("age group") or cols.get("age_group")
-
-if g_col:
-    g  = df[g_col].astype(str).str.strip().str.lower()
-    ag = df[ag_col].astype(str).str.strip().str.lower() if ag_col else ""
-
-    kids = (ag == "kids")
-    norm = pd.Series("", index=df.index, dtype="string")
-
-    # kids → boys / girls / childrens
-    norm = norm.mask(kids & (g == "male"),   "boys")
-    norm = norm.mask(kids & (g == "female"), "girls")
-    norm = norm.mask(kids & (g == "unisex"), "childrens")
-
-    # adults → mens / womens ; unisex adults blank
-    norm = norm.mask(~kids & (g == "male"),   "mens")
-    norm = norm.mask(~kids & (g == "female"), "womens")
-
-    df["age_gender_segment"] = norm.fillna("")
+if st.session_state.get("product_count_toast_sig") != file_sig:
+    st.toast(msg)
+    st.session_state.product_count_toast_sig = file_sig
 
 # === Quick CSV export (post-upload, pre-preview) ===
 if df is not None and not df.empty:
     try:
-        base_name = tsv_file.name
-        file_name = re.sub(r"\.tsv$", ".csv", base_name, flags=re.I)
+        base_name = uploaded_file.name
+        file_name = re.sub(r"\.(tsv|txt|csv|xlsx|xls)$", ".csv", base_name, flags=re.I)
     except Exception:
         file_name = "data.csv"
 
     st.download_button(
         "Download CSV version",
-        data=df.to_csv(index=False).encode("utf-8-sig"),
+        data=to_csv_bytes(df),
         file_name=file_name,
         mime="text/csv",
-        help="Export the uploaded data as CSV."
+        help="Export the uploaded data as CSV.",
+        key="dl_source_csv",
     )
+
 
 # --- Helpers ---
 def norm(s: str) -> str:
@@ -137,12 +255,6 @@ def norm(s: str) -> str:
 # Build lookup: normalized_name -> original column name
 norm_to_orig = {norm(c): c for c in df.columns}
 
-# Google-recommended fields (normalized)
-recommended_raw = [
-    "title","availability","price","brand","gtin","mpn",
-    "condition","language","age group","product type","gender","color",
-    "google product category","age_gender_segment"
-]
 
 recommended_norm = {norm(x) for x in recommended_raw}
 # NEW BLOCK FOR COLUMN PICKER STARTS HERE
@@ -218,7 +330,7 @@ edited = st.data_editor(
 for _, r in edited.iterrows():
     st.session_state.keep_map[r["Column"]] = bool(r["Keep"])
 
-keep_cols = [c for c, k in st.session_state.keep_map.items() if k]
+keep_cols = [c for c, k in st.session_state.keep_map.items() if k and c in df.columns]
 st.caption(f"{len(keep_cols)} column(s) selected.")
 
 # preview with horizontal scroll and URL clamping
@@ -420,9 +532,10 @@ cat_src_col = st.selectbox(
     key="cat_src_col"
 )
 
-c1, c2 = st.columns(2)
-want_main  = c1.checkbox("Create main_category (first segment)", value=True, key="want_main")
-want_final = c2.checkbox("Create final_category (last segment)", value=False, key="want_final")
+c1, c2, c3 = st.columns(3)
+want_main  = c1.checkbox("Create main_category (first segment)", value=False, key="want_main")
+want_penultimate = c2.checkbox("Create penultimate_category (second-to-last segment)", value=False, key="want_penultimate")
+want_final = c3.checkbox("Create final_category (last segment)", value=True, key="want_final")
 
 # compute parts once
 parts = (
@@ -436,6 +549,14 @@ if want_main:
 else:
     if "main_category" in filtered.columns:
         del filtered["main_category"]
+
+if want_penultimate:
+    filtered["penultimate_category"] = parts.apply(
+        lambda xs: (xs[-2] if len(xs) >= 2 else (xs[0] if xs else ""))
+    ).str.lower()
+else:
+    if "penultimate_category" in filtered.columns:
+        del filtered["penultimate_category"]
 
 if want_final:
     filtered["final_category"] = parts.apply(lambda xs: (xs[-1] if xs else "")).str.lower()
@@ -451,6 +572,12 @@ if 'mapped_output' in locals():
     else:
         mapped_output.drop(columns=["main_category"], inplace=True, errors="ignore")
 
+    # penultimate_category
+    if want_penultimate and "penultimate_category" in filtered.columns:
+        mapped_output["penultimate_category"] = filtered["penultimate_category"]
+    else:
+        mapped_output.drop(columns=["penultimate_category"], inplace=True, errors="ignore")
+
     # final_category
     if want_final and "final_category" in filtered.columns:
         mapped_output["final_category"] = filtered["final_category"]
@@ -459,7 +586,10 @@ if 'mapped_output' in locals():
 
 
 # preview only if any created
-preview_cols = [cat_src_col] + [c for c in ["main_category","final_category"] if c in filtered.columns]
+preview_cols = [cat_src_col] + [
+    c for c in ["main_category", "penultimate_category", "final_category"]
+    if c in filtered.columns
+]
 if len(preview_cols) > 1:
     st.dataframe(filtered[preview_cols].head(preview_rows), width="stretch", height=280)
 else:
@@ -619,7 +749,6 @@ def _norm_id(x):
     return str(x).replace("-", "").strip() if x else ""
 
 def get_gads_client_and_customer_id() -> Tuple[object, str]:
-    """Prefer Streamlit Secrets; safely fall back to local google-ads.yaml."""
     from google.ads.googleads.client import GoogleAdsClient
     try:
         has_secrets = "google_ads" in st.secrets
@@ -637,8 +766,7 @@ def get_gads_client_and_customer_id() -> Tuple[object, str]:
             "client_customer_id": s.get("client_customer_id"),
             "use_proto_plus": True,
         }
-        cfg = {k: v for k, v in cfg.items() if v is not None}
-        yaml_text = yaml.dump(cfg)
+        yaml_text = yaml.dump({k: v for k, v in cfg.items() if v is not None})
         client = GoogleAdsClient.load_from_string(yaml_text, version="v20")
         effective_id = _norm_id(s.get("client_customer_id")) or _norm_id(s.get("login_customer_id"))
         return client, effective_id
@@ -672,45 +800,103 @@ with c4:
         st.success("Cleared cached Google Ads results.")
 
 # ---- Danger-styled fetch button ----
-st.markdown('<div style="--primary-color:#d9534f; --secondary-background-color:#b73f3b;">', unsafe_allow_html=True)
+st.markdown('<div style="--primary-color:#d9534f;">', unsafe_allow_html=True)
 run_fetch = st.button("Fetch Google Ads volumes", type="primary")
 st.markdown("</div>", unsafe_allow_html=True)
 
 def _parse_geo_ids(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
 
+QPS_SLEEP = 1.2  # seconds between requests to respect Google Ads 1 QPS limit
+
+def _sleep_with_retry_delay(retry_seconds: Optional[float], attempt: int) -> None:
+    if retry_seconds is not None:
+        time.sleep(retry_seconds + 1.0)
+    else:
+        base = min(60.0, 4.0 * (2 ** max(attempt, 0)))
+        time.sleep(base + random.random())
+
+def batched(iterable, n: int):
+    it = iter(iterable)
+    size = max(1, n)
+    while True:
+        chunk = list(itertools.islice(it, size))
+        if not chunk:
+            break
+        yield chunk
+
 def fetch_historical_metrics_gads(client, customer_id: str, keywords: list[str],
                                   geo_ids: list[str], language_id: str,
                                   batch_size: int = 700) -> tuple[pd.DataFrame, list]:
+    if not keywords:
+        return pd.DataFrame(), []
+
     try:
         from google.protobuf.json_format import MessageToDict
     except Exception:
         MessageToDict = None
 
+    from google.api_core.retry import Retry, if_exception_type
+    from google.api_core import exceptions as gcore_exc
+    import grpc
+
     googleads_service = client.get_service("GoogleAdsService")
     idea_service = client.get_service("KeywordPlanIdeaService")
+    network_enum = client.enums.KeywordPlanNetworkEnum
+
+    grpc_retry = Retry(
+        predicate=if_exception_type(gcore_exc.ResourceExhausted, gcore_exc.ServiceUnavailable),
+        initial=4.0, maximum=60.0, multiplier=1.6,
+    )
 
     out_rows, raw_results = [], []
     total = len(keywords)
-    prog = st.progress(0.0, text="Requesting batches…")
+    batches = math.ceil(total / max(1, batch_size))
+    prog = st.progress(0.0, text="Requesting batches…") if total else None
 
-    for i in range(0, total, batch_size):
-        batch = keywords[i:i+batch_size]
-        req = client.get_type("GenerateKeywordHistoricalMetricsRequest")
+    for idx, chunk in enumerate(batched(keywords, batch_size)):
+        req = client.get_type("GenerateKeywordHistoricalMetricsRequest")  # fresh instance
         req.customer_id = customer_id
-        req.keywords.extend(batch)
-        req.keyword_plan_network = client.enums.KeywordPlanNetworkEnum.GOOGLE_SEARCH
+        req.keywords.extend(chunk)
+        req.keyword_plan_network = network_enum.GOOGLE_SEARCH
         req.language = googleads_service.language_constant_path(language_id)
+        try:
+
+            req.historical_metrics_options.year_month_range.include_zero_monthly_searches = True
+        except AttributeError:
+            pass
         for gid in geo_ids:
             req.geo_target_constants.append(googleads_service.geo_target_constant_path(gid))
 
-        resp = idea_service.generate_keyword_historical_metrics(request=req)
+        attempts = 0
+        while True:
+            try:
+                time.sleep(QPS_SLEEP)
+                resp = grpc_retry(idea_service.generate_keyword_historical_metrics)(request=req)
+                break
+            except gcore_exc.ResourceExhausted as e:
+                attempts += 1
+                if attempts > 8:
+                    raise
+                retry_seconds: Optional[float] = None
+                m = re.search(r"Retry in (\d+)\s*second", str(e))
+                if m:
+                    retry_seconds = float(m.group(1))
+                _sleep_with_retry_delay(retry_seconds, attempts - 1)
+            except (gcore_exc.ServiceUnavailable, gcore_exc.DeadlineExceeded, grpc.RpcError):
+                attempts += 1
+                if attempts > 8:
+                    raise
+                _sleep_with_retry_delay(None, attempts - 1)
 
-        if MessageToDict:
+        if MessageToDict and hasattr(resp, "results"):
             raw_results.extend([MessageToDict(r._pb) for r in resp.results])
         else:
             for r in resp.results:
-                raw_results.append({"text": getattr(r, "text", ""), "closeVariants": list(getattr(r, "close_variants", []))})
+                raw_results.append({
+                    "text": getattr(r, "text", ""),
+                    "closeVariants": list(getattr(r, "close_variants", [])),
+                })
 
         for r in resp.results:
             m = r.keyword_metrics
@@ -729,13 +915,21 @@ def fetch_historical_metrics_gads(client, customer_id: str, keywords: list[str],
             }
             if getattr(m, "monthly_search_volumes", None):
                 for mv in m.monthly_search_volumes:
-                    month_num = ["JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE","JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"].index(mv.month.name)+1
-                    out_rows.append(base | {"year": int(mv.year), "month": month_num,
-                                            "monthly_searches": int(mv.monthly_searches) if mv.monthly_searches is not None else None})
+                    month_num = ["JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE",
+                                 "JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"].index(mv.month.name)+1
+                    out_rows.append(base | {
+                        "year": int(mv.year),
+                        "month": month_num,
+                        "monthly_searches": int(mv.monthly_searches) if mv.monthly_searches is not None else None,
+                    })
             else:
                 out_rows.append(base | {"year": None, "month": None, "monthly_searches": None})
 
-        prog.progress(min((i+batch_size)/max(total,1),1.0))
+        if prog:
+            prog.progress(min((idx + 1) / max(batches, 1), 1.0))
+
+    if prog:
+        prog.progress(1.0, text="Google Ads batches complete.")
 
     df = pd.DataFrame(out_rows)
     if not df.empty and "aliases" in df.columns:
@@ -810,29 +1004,19 @@ def render_gads_results(combined_df: pd.DataFrame):
         )
 
 render_gads_results(combined_df)
+
 # ==== Search volume charts (after Google Ads results) ====
 st.subheader("Search volume charts")
-
 gdf = st.session_state.get("gads_results_df")
 if gdf is None or gdf.empty or combined_df.empty:
     st.info("Fetch Google Ads volumes first to plot charts.")
 else:
-    # join to get list_name on each keyword/month
     left = combined_df.assign(keyword_norm=combined_df["keyword"].str.lower().str.strip())
-    fv = (
-        left.merge(gdf, on="keyword_norm", how="left")
-            .dropna(subset=["year","month","monthly_searches"])
-    )
+    fv = left.merge(gdf, on="keyword_norm", how="left").dropna(subset=["year","month","monthly_searches"])
+    fv["date"] = pd.to_datetime(dict(year=fv["year"].astype(int), month=fv["month"].astype(int), day=1))
 
-    # month date for x-axis
-    fv["date"] = pd.to_datetime(dict(year=fv["year"].astype(int),
-                                     month=fv["month"].astype(int), day=1))
-
-    # choose lists
-    totals = (
-        fv.groupby("list_name", as_index=False)["monthly_searches"].sum()
-          .sort_values("monthly_searches", ascending=False)
-    )
+    totals = (fv.groupby("list_name", as_index=False)["monthly_searches"].sum()
+                .sort_values("monthly_searches", ascending=False))
     default_lists = totals["list_name"].head(6).tolist()
     chosen_lists = st.multiselect("Lists to plot", totals["list_name"].tolist(), default_lists)
     fv = fv[fv["list_name"].isin(chosen_lists)] if chosen_lists else fv
@@ -841,70 +1025,45 @@ else:
     import altair as alt
     PALETTE = ["#F8F3DA", "#00E5FF", "#FF6B6B", "#FFD166", "#06D6A0", "#A66CFF", "#4D96FF"]
 
-    # ---------- Chart 1: chronological, MMM ’YY ticks, smoothed ----------
-    chron = (
-        fv.groupby(["list_name","date"], as_index=False)["monthly_searches"].sum()
-          .sort_values("date")
-    )
-
-    c1 = (
-        alt.Chart(chron)
-        .mark_line(point=True, strokeWidth=2, interpolate="monotone")
-        .encode(
-            x=alt.X("yearmonth(date):T", title="Month",
-                    axis=alt.Axis(format="%b '%y")),
-            y=alt.Y("monthly_searches:Q", title="Total searches",
-                    axis=alt.Axis(format="~s")),
-            color=alt.Color("list_name:N", title="List",
-                            scale=alt.Scale(range=PALETTE), sort=legend_sort),
-            tooltip=[
-                "list_name",
-                alt.Tooltip("yearmonth(date):T", title="Month"),
-                alt.Tooltip("monthly_searches:Q", title="Searches", format="~s"),
-            ],
-        )
-        .properties(title="Chronological search volume", width="container", height=320)
-        .configure_axis(grid=False, labelColor="#F8F3DA", titleColor="#F8F3DA")
-        .configure_legend(labelColor="#F8F3DA", titleColor="#F8F3DA")
-        .configure_view(strokeWidth=0, fill="transparent")
-    )
+    chron = (fv.groupby(["list_name","date"], as_index=False)["monthly_searches"].sum()
+               .sort_values("date"))
+    c1 = (alt.Chart(chron).mark_line(point=True, strokeWidth=2, interpolate="monotone")
+          .encode(
+              x=alt.X("yearmonth(date):T", title="Month", axis=alt.Axis(format="%b '%y")),
+              y=alt.Y("monthly_searches:Q", title="Total searches", axis=alt.Axis(format="~s")),
+              color=alt.Color("list_name:N", title="List",
+                              scale=alt.Scale(range=PALETTE), sort=legend_sort),
+              tooltip=["list_name",
+                       alt.Tooltip("yearmonth(date):T", title="Month"),
+                       alt.Tooltip("monthly_searches:Q", title="Searches", format="~s")],
+          )
+          .properties(title="Chronological search volume", width="container", height=320)
+          .configure_axis(grid=False, labelColor="#F8F3DA", titleColor="#F8F3DA")
+          .configure_legend(labelColor="#F8F3DA", titleColor="#F8F3DA")
+          .configure_view(strokeWidth=0, fill="transparent"))
     st.altair_chart(c1, theme=None, use_container_width=True)
 
-    # ---------- Chart 2: seasonality normalised to 0–100% per list, smoothed ----------
-    month_order = ["January","February","March","April","May","June",
-                   "July","August","September","October","November","December"]
-    fv["month_name"] = pd.Categorical(fv["date"].dt.month_name(),
-                                      categories=month_order, ordered=True)
-
-    season = (
-        fv.groupby(["list_name","month_name"], as_index=False)["monthly_searches"].sum()
-          .dropna(subset=["month_name"])
-          .sort_values(["list_name","month_name"])
-    )
+    month_order = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+    fv["month_name"] = pd.Categorical(fv["date"].dt.month_name(), categories=month_order, ordered=True)
+    season = (fv.groupby(["list_name","month_name"], as_index=False)["monthly_searches"].sum()
+                .dropna(subset=["month_name"]).sort_values(["list_name","month_name"]))
     denom = season.groupby("list_name")["monthly_searches"].transform("max").clip(lower=1)
     season["frac_of_peak"] = season["monthly_searches"] / denom
 
-    c2 = (
-        alt.Chart(season)
-        .mark_line(point=True, strokeWidth=2, interpolate="monotone")
-        .encode(
-            x=alt.X("month_name:O", sort=month_order, title="Month (Jan→Dec)"),
-            y=alt.Y("frac_of_peak:Q", title="Seasonality",
-                    scale=alt.Scale(domain=[0,1]),
-                    axis=alt.Axis(format=".0%", values=[0,0.2,0.4,0.6,0.8,1])),
-            color=alt.Color("list_name:N", title="List",
-                            scale=alt.Scale(range=PALETTE), sort=legend_sort),
-            tooltip=[
-                "list_name",
-                "month_name",
-                alt.Tooltip("frac_of_peak:Q", title="% of peak", format=".0%"),
-            ],
-        )
-        .properties(title="Seasonality by list (normalised)", width="container", height=320)
-        .configure_axis(grid=False, labelColor="#F8F3DA", titleColor="#F8F3DA")
-        .configure_legend(labelColor="#F8F3DA", titleColor="#F8F3DA")
-        .configure_view(strokeWidth=0, fill="transparent")
-    )
+    c2 = (alt.Chart(season).mark_line(point=True, strokeWidth=2, interpolate="monotone")
+          .encode(
+              x=alt.X("month_name:O", sort=month_order, title="Month (Jan→Dec)"),
+              y=alt.Y("frac_of_peak:Q", title="Seasonality", scale=alt.Scale(domain=[0,1]),
+                      axis=alt.Axis(format=".0%", values=[0,0.2,0.4,0.6,0.8,1])),
+              color=alt.Color("list_name:N", title="List",
+                              scale=alt.Scale(range=PALETTE), sort=legend_sort),
+              tooltip=["list_name","month_name",
+                       alt.Tooltip("frac_of_peak:Q", title="% of peak", format=".0%")],
+          )
+          .properties(title="Seasonality by list (normalised)", width="container", height=320)
+          .configure_axis(grid=False, labelColor="#F8F3DA", titleColor="#F8F3DA")
+          .configure_legend(labelColor="#F8F3DA", titleColor="#F8F3DA")
+          .configure_view(strokeWidth=0, fill="transparent"))
     st.altair_chart(c2, theme=None, use_container_width=True)
 
 
