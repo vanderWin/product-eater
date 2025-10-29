@@ -99,13 +99,25 @@ def to_csv_bytes(df: pd.DataFrame) -> bytes:
 
 # Non-cached Excel export helper
 def to_xlsx_bytes(df: pd.DataFrame, sheet_name: str = "Data") -> bytes:
+    # Write using openpyxl to ensure strings remain plain text (no auto URL encoding)
+    # This avoids Excel/XlsxWriter hyperlink limits and related warnings.
     buf = io.BytesIO()
     try:
-        with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
-            df.to_excel(w, index=False, sheet_name=sheet_name)
-    except Exception:
         with pd.ExcelWriter(buf, engine="openpyxl") as w:
             df.to_excel(w, index=False, sheet_name=sheet_name)
+    except Exception:
+        # Fallback to xlsxwriter with URL detection disabled if openpyxl is unavailable
+        try:
+            with pd.ExcelWriter(
+                buf,
+                engine="xlsxwriter",
+                engine_kwargs={"options": {"strings_to_urls": False, "strings_to_formulas": False}},
+            ) as w:
+                df.to_excel(w, index=False, sheet_name=sheet_name)
+        except Exception:
+            # Last-resort fallback: try xlsxwriter default
+            with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
+                df.to_excel(w, index=False, sheet_name=sheet_name)
     buf.seek(0)
     return buf.getvalue()
 
@@ -197,6 +209,7 @@ df["age_gender_segment"] = age_gender_norm.fillna("")
 recommended_raw = [
     "title", "availability", "price", "brand", "gtin", "mpn",
     "condition", "language", "age group", "product type", "gender", "color",
+    "image link", "additional image link",
     "google product category", "age_gender_segment",
 ]
 
@@ -251,15 +264,21 @@ if df is not None and not df.empty:
         file_name = "data.csv"
         xlsx_name = "data.xlsx"
 
-    # Prefer Excel for Excel users
-    st.download_button(
-        "Download Excel",
-        data=to_xlsx_bytes(df, sheet_name="Data"),
-        file_name=xlsx_name,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        help="Export the uploaded data as Excel.",
-        key="dl_source_xlsx",
-    )
+    # Prepare-on-click to avoid building Excel in background
+    if st.session_state.get("_source_xlsx_sig") != file_sig:
+        st.session_state.pop("_source_xlsx_bytes", None)
+        st.session_state["_source_xlsx_sig"] = file_sig
+    if st.button("Prepare Excel", key="prep_source_xlsx", help="Generate Excel for download"):
+        st.session_state["_source_xlsx_bytes"] = to_xlsx_bytes(df, sheet_name="Data")
+    if st.session_state.get("_source_xlsx_bytes"):
+        st.download_button(
+            "Download Excel",
+            data=st.session_state["_source_xlsx_bytes"],
+            file_name=xlsx_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Export the uploaded data as Excel.",
+            key="dl_source_xlsx",
+        )
     st.download_button(
         "Download CSV version",
         data=to_csv_bytes(df),
@@ -417,10 +436,67 @@ else:
 st.write(f"Keeping {len(filtered)} rows and {len(keep_cols)} column(s).")
 st.dataframe(filtered.head(preview_rows), width="stretch", height=400)
 
+# ---- Product groups by image ----
+st.subheader("Product groups by image")
+
+# Choose source column (prefer additional image link)
+_f_norm_to_orig = {norm(c): c for c in filtered.columns}
+img_wanted = [
+    "additional image link", "image link",
+    "additional_image_link", "image_link",
+]
+img_wanted_norm = [norm(w) for w in img_wanted]
+# Deduplicate while preserving order
+_cands = []
+for w in img_wanted_norm:
+    if w in _f_norm_to_orig:
+        col = _f_norm_to_orig[w]
+        if col not in _cands:
+            _cands.append(col)
+img_candidates = _cands
+
+if not img_candidates:
+    st.info("No image fields detected. Add one of: additional image link, image link.")
+else:
+    # default to additional image link if present
+    default_norm = norm("additional image link") if norm("additional image link") in _f_norm_to_orig else img_wanted_norm[0]
+    default_idx = 0
+    if default_norm in _f_norm_to_orig and _f_norm_to_orig[default_norm] in img_candidates:
+        default_idx = img_candidates.index(_f_norm_to_orig[default_norm])
+
+    img_col = st.selectbox("Group by image column", options=img_candidates, index=default_idx,
+                           help="Groups products sharing the same first image URL (ignoring blanks).")
+
+    # Extract first URL if multiple are present
+    _url_re = re.compile(r"https?://[^\s,]+", flags=re.I)
+    def _first_url(v: str) -> str:
+        if not isinstance(v, str):
+            v = str(v) if v is not None else ""
+        m = _url_re.findall(v)
+        return m[0].strip() if m else ""
+
+    keys = filtered[img_col].astype(str).map(_first_url).str.strip()
+    has_key = keys.ne("")
+    # Assign stable 1-based group ids for rows with a URL
+    codes = pd.Series(pd.NA, index=filtered.index, dtype="Int64")
+    if has_key.any():
+        fact = pd.factorize(keys[has_key])[0] + 1
+        codes.loc[has_key] = pd.array(fact, dtype="Int64")
+    filtered["image_group_id"] = codes
+
+    grp_count = int(keys[has_key].nunique())
+    c1, c2 = st.columns(2)
+    c1.metric("Product groups", f"{grp_count:,}")
+    c2.metric("SKUs (rows)", f"{len(filtered):,}")
+
 # ---- Colour summary ----
 st.subheader("Colour summary")
 
-colour_candidates = [c for c in ["generic_colour", "product_colour", "color", "colour"] if c in filtered.columns]
+# Robustly detect colour column(s) ignoring case/spaces
+_f_norm_to_orig = {norm(c): c for c in filtered.columns}
+_wanted = ["generic_colour", "product_colour", "color", "colour"]
+colour_candidates = [_f_norm_to_orig[w] for w in _wanted if w in _f_norm_to_orig]
+
 if not colour_candidates:
     st.info("No colour column found in selected columns. Add one of: generic_colour, product_colour, color, colour.")
 else:
@@ -434,19 +510,24 @@ else:
         .rename_axis("Colour")
         .reset_index(name="Product Count")
     )
-    vc["% of Products"] = (vc["Product Count"] / non_empty * 100).round(2)
+    # Show percentage with % symbol (0.00%)
+    perc = (vc["Product Count"] / max(non_empty, 1) * 100)
+    vc["% of Products"] = perc.map(lambda x: f"{x:.2f}%")
 
     st.dataframe(vc, width="stretch")
     st.caption(f"Non-empty colours: {non_empty:,} rows.")
 
-    # Excel first, then CSV
-    st.download_button(
-        "Download colour summary (Excel)",
-        data=to_xlsx_bytes(vc, sheet_name="Colour Summary"),
-        file_name="colour_summary.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="dl_colour_summary_xlsx",
-    )
+    # Excel prepared on click
+    if st.button("Prepare colour summary (Excel)", key="prep_colour_summary_xlsx"):
+        st.session_state["_colour_summary_xlsx_bytes"] = to_xlsx_bytes(vc, sheet_name="Colour Summary")
+    if st.session_state.get("_colour_summary_xlsx_bytes"):
+        st.download_button(
+            "Download colour summary (Excel)",
+            data=st.session_state["_colour_summary_xlsx_bytes"],
+            file_name="colour_summary.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_colour_summary_xlsx",
+        )
     st.download_button(
         "Download colour summary CSV",
         to_csv_bytes(vc),
@@ -457,7 +538,10 @@ else:
 # ---- Colour mapping (index-safe: use Series.map, not merge) ----
 st.subheader("Colour mapping")
 
-colour_candidates = [c for c in ["generic_colour", "product_colour", "color", "colour"] if c in filtered.columns]
+# Robustly detect possible colour source columns (ignore case/spaces)
+_f_norm_to_orig = {norm(c): c for c in filtered.columns}
+_wanted = ["generic_colour", "product_colour", "color", "colour"]
+colour_candidates = [_f_norm_to_orig[w] for w in _wanted if w in _f_norm_to_orig]
 has_colour = bool(colour_candidates)
 
 if not has_colour:
@@ -550,13 +634,16 @@ else:
                 metric_slot.metric("Products currently mapped", f"🌈 {pct_mapped}% ({mapped_after_count:,} / {eligible_after_count:,})")
 
                 # Excel first, then CSV
-                st.download_button(
-                    "Download updated colour_mapping.xlsx",
-                    data=to_xlsx_bytes(updated_map, sheet_name="colour_mapping"),
-                    file_name="updated_colour_mapping.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="dl_updated_colour_map_xlsx",
-                )
+                if st.button("Prepare updated colour_mapping (Excel)", key="prep_updated_colour_map_xlsx"):
+                    st.session_state["_updated_colour_map_xlsx_bytes"] = to_xlsx_bytes(updated_map, sheet_name="colour_mapping")
+                if st.session_state.get("_updated_colour_map_xlsx_bytes"):
+                    st.download_button(
+                        "Download updated colour_mapping.xlsx",
+                        data=st.session_state["_updated_colour_map_xlsx_bytes"],
+                        file_name="updated_colour_mapping.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_updated_colour_map_xlsx",
+                    )
                 st.download_button(
                     "Download updated colour_mapping.csv",
                     to_csv_bytes(updated_map),
@@ -649,13 +736,16 @@ tidy_df = mapped_output if 'mapped_output' in locals() else filtered
 
 st.subheader("Download normalised product feed")
 st.dataframe(tidy_df.head(preview_rows), width="stretch", height=320)
-st.download_button(
-    "Download normalised feed (Excel)",
-    data=to_xlsx_bytes(tidy_df, sheet_name="Normalised Feed"),
-    file_name="normalised_feed.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    key="dl_normalised_feed_xlsx",
-)
+if st.button("Prepare normalised feed (Excel)", key="prep_normalised_feed_xlsx"):
+    st.session_state["_normalised_feed_xlsx_bytes"] = to_xlsx_bytes(tidy_df, sheet_name="Normalised Feed")
+if st.session_state.get("_normalised_feed_xlsx_bytes"):
+    st.download_button(
+        "Download normalised feed (Excel)",
+        data=st.session_state["_normalised_feed_xlsx_bytes"],
+        file_name="normalised_feed.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="dl_normalised_feed_xlsx",
+    )
 st.download_button(
     "Download normalised feed (CSV)",
     to_csv_bytes(tidy_df),
@@ -692,7 +782,7 @@ per_list_tables = []
 
 def make_keywords(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     if not cols:
-        return pd.DataFrame(columns=["keyword", "Product Count"])
+        return pd.DataFrame(columns=["keyword", "Product Count", "Unique Product Groups"])
 
     sub = df[cols].copy()
 
@@ -708,13 +798,27 @@ def make_keywords(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     valid_mask = (~sub.isin(INVALIDS)).all(axis=1)
 
     if not valid_mask.any():
-        return pd.DataFrame(columns=["keyword", "Product Count"])
+        return pd.DataFrame(columns=["keyword", "Product Count", "Unique Product Groups"])
 
     s = sub.loc[valid_mask].apply(lambda row: " ".join(row.values), axis=1)
     s = s.str.replace(r"\s+", " ", regex=True).str.strip()  # tidy spacing
 
-    out = s.value_counts()
-    return out.rename_axis("keyword").reset_index(name="Product Count")
+    tmp = pd.DataFrame({"keyword": s})
+    if "image_group_id" in df.columns:
+        tmp["image_group_id"] = df.loc[tmp.index, "image_group_id"]
+        out = (tmp.groupby("keyword", as_index=False)
+                   .agg(**{
+                        "Product Count": ("keyword", "size"),
+                        "Unique Product Groups": ("image_group_id", lambda x: x.dropna().nunique()),
+                   }))
+    else:
+        out = (tmp.groupby("keyword", as_index=False)
+                   .agg(**{
+                        "Product Count": ("keyword", "size"),
+                   }))
+        out["Unique Product Groups"] = out["Product Count"]
+
+    return out
 
 
 for i, combo in enumerate(st.session_state.combos):
@@ -757,14 +861,17 @@ for i, combo in enumerate(st.session_state.combos):
     else:
         kc.insert(0, "list_name", f"List {i+1}")
     c.dataframe(kc.head(preview_rows), width="stretch", height=220)
-    # Excel first, then CSV
-    c.download_button(
-        f"Download list {i+1} (Excel)",
-        data=to_xlsx_bytes(kc, sheet_name=f"List {i+1}"),
-        file_name=f"keywords_list_{i+1}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key=f"dl_list_{i+1}_xlsx"
-    )
+    # Excel prepared on click
+    if c.button(f"Prepare list {i+1} (Excel)", key=f"prep_list_{i+1}_xlsx"):
+        st.session_state[f"_list_{i+1}_xlsx_bytes"] = to_xlsx_bytes(kc, sheet_name=f"List {i+1}")
+    if st.session_state.get(f"_list_{i+1}_xlsx_bytes"):
+        c.download_button(
+            f"Download list {i+1} (Excel)",
+            data=st.session_state[f"_list_{i+1}_xlsx_bytes"],
+            file_name=f"keywords_list_{i+1}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"dl_list_{i+1}_xlsx"
+        )
     c.download_button(
         f"Download list {i+1} CSV",
         to_csv_bytes(kc),
@@ -781,7 +888,7 @@ for idx in reversed(to_remove):
 # Combined table: keep list_name so analysts can filter
 combined_df = (
     pd.concat(per_list_tables, ignore_index=True) if per_list_tables else
-    pd.DataFrame(columns=["list_name","keyword","Product Count"])
+    pd.DataFrame(columns=["list_name","keyword","Product Count","Unique Product Groups"])
 )
 
 
@@ -792,13 +899,16 @@ source_df = tidy_df
 # Final section, keyword combos
 st.subheader("Combined keyword list")
 st.dataframe(combined_df.head(preview_rows), width="stretch", height=300)
-st.download_button(
-    "Download combined keywords (Excel)",
-    data=to_xlsx_bytes(combined_df, sheet_name="Combined Keywords"),
-    file_name="keywords_combined.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    key="dl_combined_keywords_xlsx",
-)
+if st.button("Prepare combined keywords (Excel)", key="prep_combined_keywords_xlsx"):
+    st.session_state["_combined_keywords_xlsx_bytes"] = to_xlsx_bytes(combined_df, sheet_name="Combined Keywords")
+if st.session_state.get("_combined_keywords_xlsx_bytes"):
+    st.download_button(
+        "Download combined keywords (Excel)",
+        data=st.session_state["_combined_keywords_xlsx_bytes"],
+        file_name="keywords_combined.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="dl_combined_keywords_xlsx",
+    )
 st.download_button(
     "Download combined keywords CSV",
     to_csv_bytes(combined_df),
@@ -1044,7 +1154,7 @@ def render_gads_results(combined_df: pd.DataFrame):
     final_view["matched_to"] = final_view.get("canonical_keyword","")
 
     ordered = [
-        "list_name","keyword","Product Count",
+        "list_name","keyword","Product Count","Unique Product Groups",
         "avg_monthly_searches","competition_level","competition_index",
         "low_top_of_page_bid_micros","high_top_of_page_bid_micros",
         "year","month","monthly_searches",
@@ -1055,14 +1165,17 @@ def render_gads_results(combined_df: pd.DataFrame):
 
     st.subheader("Keywords with Google Ads metrics")
     st.dataframe(final_view.head(preview_rows), width="stretch", height=360)
-    # Excel first, then CSV
-    st.download_button(
-        "Download keywords + Google Ads metrics (Excel)",
-        data=to_xlsx_bytes(final_view, sheet_name="Keywords + Metrics"),
-        file_name="keywords_with_gads_metrics.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="dl_keywords_gads_unified_xlsx"
-    )
+    # Excel prepared on click
+    if st.button("Prepare keywords + metrics (Excel)", key="prep_keywords_gads_unified_xlsx"):
+        st.session_state["_keywords_gads_unified_xlsx_bytes"] = to_xlsx_bytes(final_view, sheet_name="Keywords + Metrics")
+    if st.session_state.get("_keywords_gads_unified_xlsx_bytes"):
+        st.download_button(
+            "Download keywords + Google Ads metrics (Excel)",
+            data=st.session_state["_keywords_gads_unified_xlsx_bytes"],
+            file_name="keywords_with_gads_metrics.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_keywords_gads_unified_xlsx"
+        )
     st.download_button(
         "Download keywords + Google Ads metrics (CSV)",
         to_csv_bytes(final_view),
