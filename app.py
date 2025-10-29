@@ -97,6 +97,18 @@ def load_csv_like(file_bytes: bytes, sep: str) -> pd.DataFrame:
 def to_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False).encode("utf-8-sig")
 
+# Non-cached Excel export helper
+def to_xlsx_bytes(df: pd.DataFrame, sheet_name: str = "Data") -> bytes:
+    buf = io.BytesIO()
+    try:
+        with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
+            df.to_excel(w, index=False, sheet_name=sheet_name)
+    except Exception:
+        with pd.ExcelWriter(buf, engine="openpyxl") as w:
+            df.to_excel(w, index=False, sheet_name=sheet_name)
+    buf.seek(0)
+    return buf.getvalue()
+
 
 # === Feed ingest (TSV / CSV / Excel) ===
 st.header("Feed Preview & Column Picker")
@@ -229,14 +241,25 @@ if st.session_state.get("product_count_toast_sig") != file_sig:
     st.toast(msg)
     st.session_state.product_count_toast_sig = file_sig
 
-# === Quick CSV export (post-upload, pre-preview) ===
+# === Quick CSV/Excel export (post-upload, pre-preview) ===
 if df is not None and not df.empty:
     try:
         base_name = uploaded_file.name
         file_name = re.sub(r"\.(tsv|txt|csv|xlsx|xls)$", ".csv", base_name, flags=re.I)
+        xlsx_name = re.sub(r"\.(tsv|txt|csv|xlsx|xls)$", ".xlsx", base_name, flags=re.I)
     except Exception:
         file_name = "data.csv"
+        xlsx_name = "data.xlsx"
 
+    # Prefer Excel for Excel users
+    st.download_button(
+        "Download Excel",
+        data=to_xlsx_bytes(df, sheet_name="Data"),
+        file_name=xlsx_name,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        help="Export the uploaded data as Excel.",
+        key="dl_source_xlsx",
+    )
     st.download_button(
         "Download CSV version",
         data=to_csv_bytes(df),
@@ -306,23 +329,33 @@ if qa4.button("Invert selection"):
 # build selector table
 sample_vals = df.head(1).astype(str).T.reset_index()
 sample_vals.columns = ["Column", "Example"]
+
+# compute non-empty unique counts per column
+unique_counts = [
+    int(pd.Series(df[c]).astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+    for c in df.columns
+]
+
 selector_df = pd.DataFrame({
     "Keep": [bool(st.session_state.keep_map.get(c, False)) for c in df.columns],
     "Column": df.columns,
+    "Unique Instances": unique_counts,
 }).merge(sample_vals, on="Column", how="left")
+# Reorder so Unique Instances is last
+selector_df = selector_df[["Keep", "Column", "Example", "Unique Instances"]]
 
 edited = st.data_editor(
     selector_df,
     hide_index=True,
-    width="stretch",
     height=320,
     column_config={
-        "Keep": st.column_config.CheckboxColumn("Keep", help="Tick to include this column"),
-        "Column": st.column_config.TextColumn("Column", disabled=True),
-        "Example": st.column_config.TextColumn("Example", disabled=True, width="medium"),
+        "Keep": st.column_config.CheckboxColumn("Keep", help="Tick to include this column", width="small"),
+        "Column": st.column_config.TextColumn("Column", disabled=True, width="medium"),
+        "Example": st.column_config.TextColumn("Example", disabled=True, width="large"),
+        "Unique Instances": st.column_config.NumberColumn("Unique Instances", disabled=True, help="Distinct non-empty values in this field", width="small"),
     },
-    disabled=["Column","Example"],
-    use_container_width=True,
+    disabled=["Column","Unique Instances","Example"],
+    column_order=["Keep","Column","Example","Unique Instances"],
     key="col_selector_editor",
 )
 
@@ -406,9 +439,17 @@ else:
     st.dataframe(vc, width="stretch")
     st.caption(f"Non-empty colours: {non_empty:,} rows.")
 
+    # Excel first, then CSV
+    st.download_button(
+        "Download colour summary (Excel)",
+        data=to_xlsx_bytes(vc, sheet_name="Colour Summary"),
+        file_name="colour_summary.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="dl_colour_summary_xlsx",
+    )
     st.download_button(
         "Download colour summary CSV",
-        vc.to_csv(index=False).encode("utf-8"),
+        to_csv_bytes(vc),
         "colour_summary.csv",
         "text/csv",
     )
@@ -508,9 +549,17 @@ else:
 
                 metric_slot.metric("Products currently mapped", f"🌈 {pct_mapped}% ({mapped_after_count:,} / {eligible_after_count:,})")
 
+                # Excel first, then CSV
+                st.download_button(
+                    "Download updated colour_mapping.xlsx",
+                    data=to_xlsx_bytes(updated_map, sheet_name="colour_mapping"),
+                    file_name="updated_colour_mapping.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_updated_colour_map_xlsx",
+                )
                 st.download_button(
                     "Download updated colour_mapping.csv",
-                    updated_map.to_csv(index=False).encode("utf-8"),
+                    to_csv_bytes(updated_map),
                     "updated_colour_mapping.csv",
                     "text/csv",
                 )
@@ -601,8 +650,15 @@ tidy_df = mapped_output if 'mapped_output' in locals() else filtered
 st.subheader("Download normalised product feed")
 st.dataframe(tidy_df.head(preview_rows), width="stretch", height=320)
 st.download_button(
+    "Download normalised feed (Excel)",
+    data=to_xlsx_bytes(tidy_df, sheet_name="Normalised Feed"),
+    file_name="normalised_feed.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    key="dl_normalised_feed_xlsx",
+)
+st.download_button(
     "Download normalised feed (CSV)",
-    tidy_df.to_csv(index=False).encode("utf-8"),
+    to_csv_bytes(tidy_df),
     "normalised_feed.csv",
     "text/csv",
     key="dl_normalised_feed",
@@ -701,9 +757,17 @@ for i, combo in enumerate(st.session_state.combos):
     else:
         kc.insert(0, "list_name", f"List {i+1}")
     c.dataframe(kc.head(preview_rows), width="stretch", height=220)
+    # Excel first, then CSV
+    c.download_button(
+        f"Download list {i+1} (Excel)",
+        data=to_xlsx_bytes(kc, sheet_name=f"List {i+1}"),
+        file_name=f"keywords_list_{i+1}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=f"dl_list_{i+1}_xlsx"
+    )
     c.download_button(
         f"Download list {i+1} CSV",
-        kc.to_csv(index=False).encode("utf-8"),
+        to_csv_bytes(kc),
         f"keywords_list_{i+1}.csv",
         "text/csv",
         key=f"dl_list_{i+1}"
@@ -729,8 +793,15 @@ source_df = tidy_df
 st.subheader("Combined keyword list")
 st.dataframe(combined_df.head(preview_rows), width="stretch", height=300)
 st.download_button(
+    "Download combined keywords (Excel)",
+    data=to_xlsx_bytes(combined_df, sheet_name="Combined Keywords"),
+    file_name="keywords_combined.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    key="dl_combined_keywords_xlsx",
+)
+st.download_button(
     "Download combined keywords CSV",
-    combined_df.to_csv(index=False).encode("utf-8"),
+    to_csv_bytes(combined_df),
     "keywords_combined.csv",
     "text/csv",
 )
@@ -984,9 +1055,17 @@ def render_gads_results(combined_df: pd.DataFrame):
 
     st.subheader("Keywords with Google Ads metrics")
     st.dataframe(final_view.head(preview_rows), width="stretch", height=360)
+    # Excel first, then CSV
+    st.download_button(
+        "Download keywords + Google Ads metrics (Excel)",
+        data=to_xlsx_bytes(final_view, sheet_name="Keywords + Metrics"),
+        file_name="keywords_with_gads_metrics.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="dl_keywords_gads_unified_xlsx"
+    )
     st.download_button(
         "Download keywords + Google Ads metrics (CSV)",
-        final_view.to_csv(index=False).encode("utf-8"),
+        to_csv_bytes(final_view),
         "keywords_with_gads_metrics.csv",
         "text/csv",
         key="dl_keywords_gads_unified"
