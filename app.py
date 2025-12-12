@@ -16,33 +16,50 @@ from typing import Tuple, Optional
 st.markdown("""
 <style>
 [data-testid="stAppViewContainer"] {
-    background: linear-gradient(45deg, #2b0573, #6325F4);
+    background: radial-gradient(135deg, #fdfdfd 0%, #f3f5f8 40%, #e8ecf2 100%);
 }
-</style>
-""", unsafe_allow_html=True)
 
-# Global CSS: style all download buttons (minimal change)
-st.markdown("""
-<style>
 div[data-testid="stDownloadButton"] > button {
-  background:#E859FF; color:#fff; border:1px solid #E859FF;
+  background:#2B0573; color:#fff; border:1px solid #2B0573;
 }
 div[data-testid="stDownloadButton"] > button:hover {
   filter: brightness(0.92);
 }
-</style>
-""", unsafe_allow_html=True)
 
-# Danger button markdown
-st.markdown("""
-<style>
-.danger-scope { --primary-color:#d9534f; }          /* bg */
-.danger-scope [data-testid="baseButton-primary"] {   /* text contrast */
+.danger-scope { --primary-color:#d9534f; }
+.danger-scope [data-testid="baseButton-primary"] {
   color:#fff !important;
   border-color:#d9534f !important;
 }
 .danger-scope [data-testid="baseButton-primary"]:hover {
   filter:brightness(0.92);
+}
+
+#preview-card-anchor + div[data-testid="stVerticalBlock"] {
+  background: #ffffff;
+  border: 1px solid #e6e9f0;
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(17, 24, 39, 0.08);
+  padding: 20px 20px 16px;
+  margin: 16px 0 28px;
+}
+#preview-card-anchor + div[data-testid="stVerticalBlock"] > div {
+  padding: 0;
+}
+
+#gads-card-anchor + div[data-testid="stVerticalBlock"] {
+  border-color: #d9534f;
+  box-shadow: 0 8px 20px rgba(217, 83, 79, 0.25);
+}
+
+h1, h2, h3, h4, h5, h6,
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3,
+[data-testid="stMarkdownContainer"] h4,
+[data-testid="stMarkdownContainer"] h5,
+[data-testid="stMarkdownContainer"] h6 {
+  color: #2b0573 !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -314,582 +331,592 @@ div[data-testid="stDataEditor"] thead div[role="columnheader"] {
 """, unsafe_allow_html=True)
 
 # === Column selector + preview (robust) ===
-st.subheader("Preview and Select Dimensions to Analyse")
+# Anchor + container so we can style the container via CSS (next sibling)
+st.markdown('<div id="preview-card-anchor"></div>', unsafe_allow_html=True)
+with st.container():
+    st.subheader("Preview and Select Dimensions to Analyse")
 
-# initialise keep_map once
-if "keep_map" not in st.session_state:
-    # start all as False
-    initial = {c: False for c in df.columns}
-    # turn on recommended ones if provided
-    for rn in (recommended_norm or []):
-        if rn in norm_to_orig:
-            initial[norm_to_orig[rn]] = True
-    # if no recommended list, select all
-    if not any(initial.values()):
-        initial = {c: True for c in df.columns}
-    st.session_state.keep_map = initial
+    # initialise keep_map once
+    if "keep_map" not in st.session_state:
+        # start all as False
+        initial = {c: False for c in df.columns}
+        # turn on recommended ones if provided
+        for rn in (recommended_norm or []):
+            if rn in norm_to_orig:
+                initial[norm_to_orig[rn]] = True
+        # if no recommended list, select all
+        if not any(initial.values()):
+            initial = {c: True for c in df.columns}
+        st.session_state.keep_map = initial
 
 
-# quick actions
-qa1, qa2, qa3, qa4 = st.columns(4)
-if qa1.button("Select recommended"):
-    sel = {c: False for c in df.columns}
-    for rn in (recommended_norm or []):
-        if rn in norm_to_orig:
-            sel[norm_to_orig[rn]] = True
-    st.session_state.keep_map = sel
-if qa2.button("Select all"):
-    st.session_state.keep_map = {c: True for c in df.columns}
-if qa3.button("Select none"):
-    st.session_state.keep_map = {c: False for c in df.columns}
-if qa4.button("Invert selection"):
-    st.session_state.keep_map = {c: (not v) for c, v in st.session_state.keep_map.items()}
+    # quick actions
+    qa1, qa2, qa3, qa4 = st.columns(4)
+    if qa1.button("Select recommended"):
+        sel = {c: False for c in df.columns}
+        for rn in (recommended_norm or []):
+            if rn in norm_to_orig:
+                sel[norm_to_orig[rn]] = True
+        st.session_state.keep_map = sel
+    if qa2.button("Select all"):
+        st.session_state.keep_map = {c: True for c in df.columns}
+    if qa3.button("Select none"):
+        st.session_state.keep_map = {c: False for c in df.columns}
+    if qa4.button("Invert selection"):
+        st.session_state.keep_map = {c: (not v) for c, v in st.session_state.keep_map.items()}
 
-# build selector table
-sample_vals = df.head(1).astype(str).T.reset_index()
-sample_vals.columns = ["Column", "Example"]
+    # build selector table
+    sample_vals = df.head(1).astype(str).T.reset_index()
+    sample_vals.columns = ["Column", "Example"]
 
-# compute non-empty unique counts per column
-unique_counts = [
-    int(pd.Series(df[c]).astype(str).str.strip().replace("", pd.NA).dropna().nunique())
-    for c in df.columns
-]
+    # compute non-empty unique counts per column
+    unique_counts = [
+        int(pd.Series(df[c]).astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+        for c in df.columns
+    ]
 
-selector_df = pd.DataFrame({
-    "Keep": [bool(st.session_state.keep_map.get(c, False)) for c in df.columns],
-    "Column": df.columns,
-    "Unique Instances": unique_counts,
-}).merge(sample_vals, on="Column", how="left")
-# Reorder so Unique Instances is last
-selector_df = selector_df[["Keep", "Column", "Example", "Unique Instances"]]
+    selector_df = pd.DataFrame({
+        "Keep": [bool(st.session_state.keep_map.get(c, False)) for c in df.columns],
+        "Column": df.columns,
+        "Unique Instances": unique_counts,
+    }).merge(sample_vals, on="Column", how="left")
+    # Reorder so Unique Instances is last
+    selector_df = selector_df[["Keep", "Column", "Example", "Unique Instances"]]
 
-edited = st.data_editor(
-    selector_df,
-    hide_index=True,
-    height=320,
-    column_config={
-        "Keep": st.column_config.CheckboxColumn("Keep", help="Tick to include this column", width="small"),
-        "Column": st.column_config.TextColumn("Column", disabled=True, width="medium"),
-        "Example": st.column_config.TextColumn("Example", disabled=True, width="large"),
-        "Unique Instances": st.column_config.NumberColumn("Unique Instances", disabled=True, help="Distinct non-empty values in this field", width="small"),
-    },
-    disabled=["Column","Unique Instances","Example"],
-    column_order=["Keep","Column","Example","Unique Instances"],
-    key="col_selector_editor",
-)
+    edited = st.data_editor(
+        selector_df,
+        hide_index=True,
+        height=320,
+        column_config={
+            "Keep": st.column_config.CheckboxColumn("Keep", help="Tick to include this column", width="small"),
+            "Column": st.column_config.TextColumn("Column", disabled=True, width="medium"),
+            "Example": st.column_config.TextColumn("Example", disabled=True, width="large"),
+            "Unique Instances": st.column_config.NumberColumn("Unique Instances", disabled=True, help="Distinct non-empty values in this field", width="small"),
+        },
+        disabled=["Column","Unique Instances","Example"],
+        column_order=["Keep","Column","Example","Unique Instances"],
+        key="col_selector_editor",
+    )
 
-# persist selection
-for _, r in edited.iterrows():
-    st.session_state.keep_map[r["Column"]] = bool(r["Keep"])
+    # persist selection
+    for _, r in edited.iterrows():
+        st.session_state.keep_map[r["Column"]] = bool(r["Keep"])
 
-keep_cols = [c for c, k in st.session_state.keep_map.items() if k and c in df.columns]
-st.caption(f"{len(keep_cols)} column(s) selected.")
+    keep_cols = [c for c, k in st.session_state.keep_map.items() if k and c in df.columns]
+    st.caption(f"{len(keep_cols)} column(s) selected.")
 
-# preview with horizontal scroll and URL clamping
-URL_KEYS = {"link", "image link", "additional image link", "mobile link"}
-col_cfg = {}
-for c in keep_cols:
-    if any(k in c.lower() for k in URL_KEYS):
-        col_cfg[c] = st.column_config.TextColumn(c, width="medium")
+    # preview with horizontal scroll and URL clamping
+    URL_KEYS = {"link", "image link", "additional image link", "mobile link"}
+    col_cfg = {}
+    for c in keep_cols:
+        if any(k in c.lower() for k in URL_KEYS):
+            col_cfg[c] = st.column_config.TextColumn(c, width="medium")
 
-kept = df[keep_cols].copy()
-st.dataframe(
-    kept.head(preview_rows),
-    width="stretch",
-    height=520,
-    column_config=col_cfg,  # long URLs truncated visually
-)
+    kept = df[keep_cols].copy()
+    st.dataframe(
+        kept.head(preview_rows),
+        width="stretch",
+        height=520,
+        column_config=col_cfg,  # long URLs truncated visually
+    )
 
 
 # NEW BLOCK FOR COLUMN PICKER ENDS HERE
 
 
 # ---- Optional filters ----
-st.subheader("Apply filters (optional)")
+with st.container(border=True):
+    st.subheader("Apply filters (optional)")
 
-filters = {}
-for col in keep_cols:
-    # build choices from the same table we preview/export
-    series = kept[col].astype(str).str.strip()
-    uniques = series[series.ne("")].unique()
-    nunique = len(uniques)
+    filters = {}
+    for col in keep_cols:
+        # build choices from the same table we preview/export
+        series = kept[col].astype(str).str.strip()
+        uniques = series[series.ne("")].unique()
+        nunique = len(uniques)
 
-    if nunique <= 1:
-        continue
+        if nunique <= 1:
+            continue
 
-    if nunique <= 50:
-        options = sorted(uniques.tolist())
-        chosen = st.multiselect(f"Filter {col}", options)
-        if chosen:
-            filters[col] = chosen
+        if nunique <= 50:
+            options = sorted(uniques.tolist())
+            chosen = st.multiselect(f"Filter {col}", options)
+            if chosen:
+                filters[col] = chosen
 
-# Apply filters if any
-if filters:
-    filtered = kept.copy()
-    for col, vals in filters.items():
-        filtered = filtered[filtered[col].isin(vals)]
-    st.success(f"Applied {len(filters)} filter(s)")
-else:
-    filtered = kept
+    # Apply filters if any
+    if filters:
+        filtered = kept.copy()
+        for col, vals in filters.items():
+            filtered = filtered[filtered[col].isin(vals)]
+        st.success(f"Applied {len(filters)} filter(s)")
+    else:
+        filtered = kept
 
-# --- Output preview + download ---
-st.write(f"Keeping {len(filtered)} rows and {len(keep_cols)} column(s).")
-st.dataframe(filtered.head(preview_rows), width="stretch", height=400)
+    # --- Output preview + download ---
+    st.write(f"Keeping {len(filtered)} rows and {len(keep_cols)} column(s).")
+    st.dataframe(filtered.head(preview_rows), width="stretch", height=400)
 
 # ---- Product groups by image ----
-st.subheader("Product groups by image")
+with st.container(border=True):
+    st.subheader("Product groups by image")
 
-# Choose source column (prefer additional image link)
-_f_norm_to_orig = {norm(c): c for c in filtered.columns}
-img_wanted = [
-    "additional image link", "image link",
-    "additional_image_link", "image_link",
-]
-img_wanted_norm = [norm(w) for w in img_wanted]
-# Deduplicate while preserving order
-_cands = []
-for w in img_wanted_norm:
-    if w in _f_norm_to_orig:
-        col = _f_norm_to_orig[w]
-        if col not in _cands:
-            _cands.append(col)
-img_candidates = _cands
+    # Choose source column (prefer additional image link)
+    _f_norm_to_orig = {norm(c): c for c in filtered.columns}
+    img_wanted = [
+        "additional image link", "image link",
+        "additional_image_link", "image_link",
+    ]
+    img_wanted_norm = [norm(w) for w in img_wanted]
+    # Deduplicate while preserving order
+    _cands = []
+    for w in img_wanted_norm:
+        if w in _f_norm_to_orig:
+            col = _f_norm_to_orig[w]
+            if col not in _cands:
+                _cands.append(col)
+    img_candidates = _cands
 
-if not img_candidates:
-    st.info("No image fields detected. Add one of: additional image link, image link.")
-else:
-    # default to additional image link if present
-    default_norm = norm("additional image link") if norm("additional image link") in _f_norm_to_orig else img_wanted_norm[0]
-    default_idx = 0
-    if default_norm in _f_norm_to_orig and _f_norm_to_orig[default_norm] in img_candidates:
-        default_idx = img_candidates.index(_f_norm_to_orig[default_norm])
+    if not img_candidates:
+        st.info("No image fields detected. Add one of: additional image link, image link.")
+    else:
+        # default to additional image link if present
+        default_norm = norm("additional image link") if norm("additional image link") in _f_norm_to_orig else img_wanted_norm[0]
+        default_idx = 0
+        if default_norm in _f_norm_to_orig and _f_norm_to_orig[default_norm] in img_candidates:
+            default_idx = img_candidates.index(_f_norm_to_orig[default_norm])
 
-    img_col = st.selectbox("Group by image column", options=img_candidates, index=default_idx,
-                           help="Groups products sharing the same first image URL (ignoring blanks).")
+        img_col = st.selectbox("Group by image column", options=img_candidates, index=default_idx,
+                               help="Groups products sharing the same first image URL (ignoring blanks).")
 
-    # Extract first URL if multiple are present
-    _url_re = re.compile(r"https?://[^\s,]+", flags=re.I)
-    def _first_url(v: str) -> str:
-        if not isinstance(v, str):
-            v = str(v) if v is not None else ""
-        m = _url_re.findall(v)
-        return m[0].strip() if m else ""
+        # Extract first URL if multiple are present
+        _url_re = re.compile(r"https?://[^\s,]+", flags=re.I)
+        def _first_url(v: str) -> str:
+            if not isinstance(v, str):
+                v = str(v) if v is not None else ""
+            m = _url_re.findall(v)
+            return m[0].strip() if m else ""
 
-    keys = filtered[img_col].astype(str).map(_first_url).str.strip()
-    has_key = keys.ne("")
-    # Assign stable 1-based group ids for rows with a URL
-    codes = pd.Series(pd.NA, index=filtered.index, dtype="Int64")
-    if has_key.any():
-        fact = pd.factorize(keys[has_key])[0] + 1
-        codes.loc[has_key] = pd.array(fact, dtype="Int64")
-    filtered["image_group_id"] = codes
+        keys = filtered[img_col].astype(str).map(_first_url).str.strip()
+        has_key = keys.ne("")
+        # Assign stable 1-based group ids for rows with a URL
+        codes = pd.Series(pd.NA, index=filtered.index, dtype="Int64")
+        if has_key.any():
+            fact = pd.factorize(keys[has_key])[0] + 1
+            codes.loc[has_key] = pd.array(fact, dtype="Int64")
+        filtered["image_group_id"] = codes
 
-    grp_count = int(keys[has_key].nunique())
-    c1, c2 = st.columns(2)
-    c1.metric("Product groups", f"{grp_count:,}")
-    c2.metric("SKUs (rows)", f"{len(filtered):,}")
+        grp_count = int(keys[has_key].nunique())
+        c1, c2 = st.columns(2)
+        c1.metric("Product groups", f"{grp_count:,}")
+        c2.metric("SKUs (rows)", f"{len(filtered):,}")
 
 # ---- Colour summary ----
-st.subheader("Colour summary")
+with st.container(border=True):
+    st.subheader("Colour summary")
 
-# Robustly detect colour column(s) ignoring case/spaces
-_f_norm_to_orig = {norm(c): c for c in filtered.columns}
-_wanted = ["generic_colour", "product_colour", "color", "colour"]
-colour_candidates = [_f_norm_to_orig[w] for w in _wanted if w in _f_norm_to_orig]
+    # Robustly detect colour column(s) ignoring case/spaces
+    _f_norm_to_orig = {norm(c): c for c in filtered.columns}
+    _wanted = ["generic_colour", "product_colour", "color", "colour"]
+    colour_candidates = [_f_norm_to_orig[w] for w in _wanted if w in _f_norm_to_orig]
 
-if not colour_candidates:
-    st.info("No colour column found in selected columns. Add one of: generic_colour, product_colour, color, colour.")
-else:
-    colour_col = st.selectbox("Colour column", options=colour_candidates, index=0)
+    if not colour_candidates:
+        st.info("No colour column found in selected columns. Add one of: generic_colour, product_colour, color, colour.")
+    else:
+        colour_col = st.selectbox("Colour column", options=colour_candidates, index=0)
 
-    s = filtered[colour_col].astype(str).str.strip()
-    non_empty = s.ne("").sum()
+        s = filtered[colour_col].astype(str).str.strip()
+        non_empty = s.ne("").sum()
 
-    vc = (
-        s[s.ne("")].value_counts(dropna=False)
-        .rename_axis("Colour")
-        .reset_index(name="Product Count")
-    )
-    # Show percentage with % symbol (0.00%)
-    perc = (vc["Product Count"] / max(non_empty, 1) * 100)
-    vc["% of Products"] = perc.map(lambda x: f"{x:.2f}%")
-
-    st.dataframe(vc, width="stretch")
-    st.caption(f"Non-empty colours: {non_empty:,} rows.")
-
-    # Excel prepared on click
-    if st.button("Prepare colour summary (Excel)", key="prep_colour_summary_xlsx"):
-        st.session_state["_colour_summary_xlsx_bytes"] = to_xlsx_bytes(vc, sheet_name="Colour Summary")
-    if st.session_state.get("_colour_summary_xlsx_bytes"):
-        st.download_button(
-            "Download colour summary (Excel)",
-            data=st.session_state["_colour_summary_xlsx_bytes"],
-            file_name="colour_summary.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="dl_colour_summary_xlsx",
+        vc = (
+            s[s.ne("")].value_counts(dropna=False)
+            .rename_axis("Colour")
+            .reset_index(name="Product Count")
         )
-    st.download_button(
-        "Download colour summary CSV",
-        to_csv_bytes(vc),
-        "colour_summary.csv",
-        "text/csv",
-    )
+        # Show percentage with % symbol (0.00%)
+        perc = (vc["Product Count"] / max(non_empty, 1) * 100)
+        vc["% of Products"] = perc.map(lambda x: f"{x:.2f}%")
+
+        st.dataframe(vc, width="stretch")
+        st.caption(f"Non-empty colours: {non_empty:,} rows.")
+
+        # Excel prepared on click
+        if st.button("Prepare colour summary (Excel)", key="prep_colour_summary_xlsx"):
+            st.session_state["_colour_summary_xlsx_bytes"] = to_xlsx_bytes(vc, sheet_name="Colour Summary")
+        if st.session_state.get("_colour_summary_xlsx_bytes"):
+            st.download_button(
+                "Download colour summary (Excel)",
+                data=st.session_state["_colour_summary_xlsx_bytes"],
+                file_name="colour_summary.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_colour_summary_xlsx",
+            )
+        st.download_button(
+            "Download colour summary CSV",
+            to_csv_bytes(vc),
+            "colour_summary.csv",
+            "text/csv",
+        )
 
 # ---- Colour mapping (index-safe: use Series.map, not merge) ----
-st.subheader("Colour mapping")
+with st.container(border=True):
+    st.subheader("Colour mapping")
 
-# Robustly detect possible colour source columns (ignore case/spaces)
-_f_norm_to_orig = {norm(c): c for c in filtered.columns}
-_wanted = ["generic_colour", "product_colour", "color", "colour"]
-colour_candidates = [_f_norm_to_orig[w] for w in _wanted if w in _f_norm_to_orig]
-has_colour = bool(colour_candidates)
+    # Robustly detect possible colour source columns (ignore case/spaces)
+    _f_norm_to_orig = {norm(c): c for c in filtered.columns}
+    _wanted = ["generic_colour", "product_colour", "color", "colour"]
+    colour_candidates = [_f_norm_to_orig[w] for w in _wanted if w in _f_norm_to_orig]
+    has_colour = bool(colour_candidates)
 
-if not has_colour:
-    st.info("No colour column found. Skipping mapping. You can still extract categories and build keyword combinations.")
-    mapped_output = filtered.copy()
-else:
-    colour_col = st.selectbox("Source colour column for mapping", options=colour_candidates, index=0)
-
-    mapping_path = "colour_mapping.csv"
-    try:
-        colour_map = pd.read_csv(mapping_path, dtype=str)
-    except Exception as e:
-        st.error(f"Could not load colour mapping file: {e}")
+    if not has_colour:
+        st.info("No colour column found. Skipping mapping. You can still extract categories and build keyword combinations.")
         mapped_output = filtered.copy()
     else:
-        need_cols = {"product_colour", "generic_colour"}
-        if not need_cols.issubset({c.lower() for c in colour_map.columns}):
-            st.error("Mapping file must contain columns: product_colour, generic_colour")
+        colour_col = st.selectbox("Source colour column for mapping", options=colour_candidates, index=0)
+
+        mapping_path = "colour_mapping.csv"
+        try:
+            colour_map = pd.read_csv(mapping_path, dtype=str)
+        except Exception as e:
+            st.error(f"Could not load colour mapping file: {e}")
             mapped_output = filtered.copy()
         else:
-            colour_map = (
-                colour_map.rename(columns={c: c.lower() for c in colour_map.columns})[["product_colour","generic_colour"]]
-                          .assign(product_colour=lambda d: d["product_colour"].astype(str).str.strip().str.lower(),
-                                  generic_colour=lambda d: d["generic_colour"].astype(str).str.strip().str.lower())
-                          .drop_duplicates(subset=["product_colour"])
-            )
-
-            # Prepare current data and a lookup that preserves order and index
-            data = filtered.copy()
-            data["_src_colour_norm"] = data[colour_col].astype(str).str.strip().str.lower()
-
-            # Current mapping coverage
-            lkp_now = colour_map.set_index("product_colour")["generic_colour"]
-            merged_now = data.assign(generic_colour=data["_src_colour_norm"].map(lkp_now))
-
-            eligible_now = merged_now["_src_colour_norm"].ne("")
-            unmapped_now = (
-                merged_now.loc[merged_now["generic_colour"].isna() & eligible_now, "_src_colour_norm"]
-                .value_counts().rename_axis("Unmapped Colour").reset_index(name="Product Count")
-            )
-
-            st.subheader("Map unmapped colours")
-            metric_slot = st.empty()
-
-            if unmapped_now.empty:
-                updated_map = colour_map.copy()
-                metric_slot.metric("Products currently unmapped", "0 / 0", "0%")
-                st.success("All colours are mapped.")
+            need_cols = {"product_colour", "generic_colour"}
+            if not need_cols.issubset({c.lower() for c in colour_map.columns}):
+                st.error("Mapping file must contain columns: product_colour, generic_colour")
+                mapped_output = filtered.copy()
             else:
-                allowed_generic = sorted(colour_map["generic_colour"].dropna().unique().tolist())
-                unmapped_now["Map to generic colour"] = ""
-
-                edited = st.data_editor(
-                    unmapped_now,
-                    hide_index=True,
-                    width="stretch",
-                    column_config={
-                        "Unmapped Colour": st.column_config.TextColumn(disabled=True, width="large"),
-                        "Product Count": st.column_config.NumberColumn(disabled=True),
-                        "Map to generic colour": st.column_config.SelectboxColumn(options=allowed_generic, required=False, width="medium"),
-                    },
-                    num_rows="fixed",
-                    key="map_editor",
+                colour_map = (
+                    colour_map.rename(columns={c: c.lower() for c in colour_map.columns})[["product_colour","generic_colour"]]
+                              .assign(product_colour=lambda d: d["product_colour"].astype(str).str.strip().str.lower(),
+                                      generic_colour=lambda d: d["generic_colour"].astype(str).str.strip().str.lower())
+                              .drop_duplicates(subset=["product_colour"])
                 )
 
-                new_rows = (
-                    edited.loc[edited["Map to generic colour"].astype(str).str.strip() != "",
-                               ["Unmapped Colour", "Map to generic colour"]]
-                    .rename(columns={"Unmapped Colour": "product_colour",
-                                     "Map to generic colour": "generic_colour"})
-                    .assign(product_colour=lambda d: d["product_colour"].astype(str).str.strip().str.lower(),
-                            generic_colour=lambda d: d["generic_colour"].astype(str).str.strip().str.lower())
-                    .drop_duplicates(subset=["product_colour"])
+                # Prepare current data and a lookup that preserves order and index
+                data = filtered.copy()
+                data["_src_colour_norm"] = data[colour_col].astype(str).str.strip().str.lower()
+
+                # Current mapping coverage
+                lkp_now = colour_map.set_index("product_colour")["generic_colour"]
+                merged_now = data.assign(generic_colour=data["_src_colour_norm"].map(lkp_now))
+
+                eligible_now = merged_now["_src_colour_norm"].ne("")
+                unmapped_now = (
+                    merged_now.loc[merged_now["generic_colour"].isna() & eligible_now, "_src_colour_norm"]
+                    .value_counts().rename_axis("Unmapped Colour").reset_index(name="Product Count")
                 )
 
-                updated_map = (
-                    pd.concat([new_rows, colour_map], ignore_index=True)
-                      .drop_duplicates(subset=["product_colour"], keep="first")
-                )
+                st.subheader("Map unmapped colours")
+                metric_slot = st.empty()
 
-                # Recompute mapped percentage using map, not merge
-                lkp_after = updated_map.set_index("product_colour")["generic_colour"]
-                applied = data.assign(generic_colour=data["_src_colour_norm"].map(lkp_after))
+                if unmapped_now.empty:
+                    updated_map = colour_map.copy()
+                    metric_slot.metric("Products currently unmapped", "0 / 0", "0%")
+                    st.success("All colours are mapped.")
+                else:
+                    allowed_generic = sorted(colour_map["generic_colour"].dropna().unique().tolist())
+                    unmapped_now["Map to generic colour"] = ""
 
-                eligible_after = applied["_src_colour_norm"].ne("")
-                eligible_after_count = int(eligible_after.sum())
-                mapped_after_count = int((applied["generic_colour"].notna() & eligible_after).sum())
-                pct_mapped = round(mapped_after_count / eligible_after_count * 100, 2) if eligible_after_count else 0.0
-
-                metric_slot.metric("Products currently mapped", f"🌈 {pct_mapped}% ({mapped_after_count:,} / {eligible_after_count:,})")
-
-                # Excel first, then CSV
-                if st.button("Prepare updated colour_mapping (Excel)", key="prep_updated_colour_map_xlsx"):
-                    st.session_state["_updated_colour_map_xlsx_bytes"] = to_xlsx_bytes(updated_map, sheet_name="colour_mapping")
-                if st.session_state.get("_updated_colour_map_xlsx_bytes"):
-                    st.download_button(
-                        "Download updated colour_mapping.xlsx",
-                        data=st.session_state["_updated_colour_map_xlsx_bytes"],
-                        file_name="updated_colour_mapping.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="dl_updated_colour_map_xlsx",
+                    edited = st.data_editor(
+                        unmapped_now,
+                        hide_index=True,
+                        width="stretch",
+                        column_config={
+                            "Unmapped Colour": st.column_config.TextColumn(disabled=True, width="large"),
+                            "Product Count": st.column_config.NumberColumn(disabled=True),
+                            "Map to generic colour": st.column_config.SelectboxColumn(options=allowed_generic, required=False, width="medium"),
+                        },
+                        num_rows="fixed",
+                        key="map_editor",
                     )
-                st.download_button(
-                    "Download updated colour_mapping.csv",
-                    to_csv_bytes(updated_map),
-                    "updated_colour_mapping.csv",
-                    "text/csv",
-                )
 
-            # Final mapped output. No positional overwrite of other fields.
-            lkp_final = updated_map.set_index("product_colour")["generic_colour"]
-            mapped_output = data.assign(generic_colour=data["_src_colour_norm"].map(lkp_final)) \
-                                .drop(columns=["_src_colour_norm"])
+                    new_rows = (
+                        edited.loc[edited["Map to generic colour"].astype(str).str.strip() != "",
+                                   ["Unmapped Colour", "Map to generic colour"]]
+                        .rename(columns={"Unmapped Colour": "product_colour",
+                                         "Map to generic colour": "generic_colour"})
+                        .assign(product_colour=lambda d: d["product_colour"].astype(str).str.strip().str.lower(),
+                                generic_colour=lambda d: d["generic_colour"].astype(str).str.strip().str.lower())
+                        .drop_duplicates(subset=["product_colour"])
+                    )
+
+                    updated_map = (
+                        pd.concat([new_rows, colour_map], ignore_index=True)
+                          .drop_duplicates(subset=["product_colour"], keep="first")
+                    )
+
+                    # Recompute mapped percentage using map, not merge
+                    lkp_after = updated_map.set_index("product_colour")["generic_colour"]
+                    applied = data.assign(generic_colour=data["_src_colour_norm"].map(lkp_after))
+
+                    eligible_after = applied["_src_colour_norm"].ne("")
+                    eligible_after_count = int(eligible_after.sum())
+                    mapped_after_count = int((applied["generic_colour"].notna() & eligible_after).sum())
+                    pct_mapped = round(mapped_after_count / eligible_after_count * 100, 2) if eligible_after_count else 0.0
+
+                    metric_slot.metric("Products currently mapped", f"🌈 {pct_mapped}% ({mapped_after_count:,} / {eligible_after_count:,})")
+
+                    # Excel first, then CSV
+                    if st.button("Prepare updated colour_mapping (Excel)", key="prep_updated_colour_map_xlsx"):
+                        st.session_state["_updated_colour_map_xlsx_bytes"] = to_xlsx_bytes(updated_map, sheet_name="colour_mapping")
+                    if st.session_state.get("_updated_colour_map_xlsx_bytes"):
+                        st.download_button(
+                            "Download updated colour_mapping.xlsx",
+                            data=st.session_state["_updated_colour_map_xlsx_bytes"],
+                            file_name="updated_colour_mapping.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_updated_colour_map_xlsx",
+                        )
+                    st.download_button(
+                        "Download updated colour_mapping.csv",
+                        to_csv_bytes(updated_map),
+                        "updated_colour_mapping.csv",
+                        "text/csv",
+                    )
+
+                # Final mapped output. No positional overwrite of other fields.
+                lkp_final = updated_map.set_index("product_colour")["generic_colour"]
+                mapped_output = data.assign(generic_colour=data["_src_colour_norm"].map(lkp_final)) \
+                                    .drop(columns=["_src_colour_norm"])
 
 # ==== Category extraction (auto via checkboxes, no button) ====
-st.subheader("Category extraction")
+with st.container(border=True):
+    st.subheader("Category extraction")
 
-candidates = [c for c in ["google product category", "product type"] if c in filtered.columns]
-default_col = candidates[0] if candidates else list(filtered.columns)[0]
-cat_src_col = st.selectbox(
-    "Column to split into categories",
-    options=list(filtered.columns),
-    index=list(filtered.columns).index(default_col),
-    key="cat_src_col"
-)
+    candidates = [c for c in ["google product category", "product type"] if c in filtered.columns]
+    default_col = candidates[0] if candidates else list(filtered.columns)[0]
+    cat_src_col = st.selectbox(
+        "Column to split into categories",
+        options=list(filtered.columns),
+        index=list(filtered.columns).index(default_col),
+        key="cat_src_col"
+    )
 
-c1, c2, c3 = st.columns(3)
-want_main  = c1.checkbox("Create main_category (first segment)", value=False, key="want_main")
-want_penultimate = c2.checkbox("Create penultimate_category (second-to-last segment)", value=False, key="want_penultimate")
-want_final = c3.checkbox("Create final_category (last segment)", value=True, key="want_final")
+    c1, c2, c3 = st.columns(3)
+    want_main  = c1.checkbox("Create main_category (first segment)", value=False, key="want_main")
+    want_penultimate = c2.checkbox("Create penultimate_category (second-to-last segment)", value=False, key="want_penultimate")
+    want_final = c3.checkbox("Create final_category (last segment)", value=True, key="want_final")
 
-# compute parts once
-parts = (
-    filtered[cat_src_col].astype(str)
-    .apply(lambda v: [p.strip() for p in re.split(r"\s*>\s*", v) if p.strip()])
-)
+    # compute parts once
+    parts = (
+        filtered[cat_src_col].astype(str)
+        .apply(lambda v: [p.strip() for p in re.split(r"\s*>\s*", v) if p.strip()])
+    )
 
-# assign selected outputs on the filtered frame
-if want_main:
-    filtered["main_category"] = parts.apply(lambda xs: (xs[0] if xs else "")).str.lower()
-else:
-    if "main_category" in filtered.columns:
-        del filtered["main_category"]
-
-if want_penultimate:
-    filtered["penultimate_category"] = parts.apply(
-        lambda xs: (xs[-2] if len(xs) >= 2 else (xs[0] if xs else ""))
-    ).str.lower()
-else:
-    if "penultimate_category" in filtered.columns:
-        del filtered["penultimate_category"]
-
-if want_final:
-    filtered["final_category"] = parts.apply(lambda xs: (xs[-1] if xs else "")).str.lower()
-else:
-    if "final_category" in filtered.columns:
-        del filtered["final_category"]
-
-# mirror into mapped_output without reindexing or positional writes
-if 'mapped_output' in locals():
-    # main_category
-    if want_main and "main_category" in filtered.columns:
-        mapped_output["main_category"] = filtered["main_category"]
+    # assign selected outputs on the filtered frame
+    if want_main:
+        filtered["main_category"] = parts.apply(lambda xs: (xs[0] if xs else "")).str.lower()
     else:
-        mapped_output.drop(columns=["main_category"], inplace=True, errors="ignore")
+        if "main_category" in filtered.columns:
+            del filtered["main_category"]
 
-    # penultimate_category
-    if want_penultimate and "penultimate_category" in filtered.columns:
-        mapped_output["penultimate_category"] = filtered["penultimate_category"]
+    if want_penultimate:
+        filtered["penultimate_category"] = parts.apply(
+            lambda xs: (xs[-2] if len(xs) >= 2 else (xs[0] if xs else ""))
+        ).str.lower()
     else:
-        mapped_output.drop(columns=["penultimate_category"], inplace=True, errors="ignore")
+        if "penultimate_category" in filtered.columns:
+            del filtered["penultimate_category"]
 
-    # final_category
-    if want_final and "final_category" in filtered.columns:
-        mapped_output["final_category"] = filtered["final_category"]
+    if want_final:
+        filtered["final_category"] = parts.apply(lambda xs: (xs[-1] if xs else "")).str.lower()
     else:
-        mapped_output.drop(columns=["final_category"], inplace=True, errors="ignore")
+        if "final_category" in filtered.columns:
+            del filtered["final_category"]
+
+    # mirror into mapped_output without reindexing or positional writes
+    if 'mapped_output' in locals():
+        # main_category
+        if want_main and "main_category" in filtered.columns:
+            mapped_output["main_category"] = filtered["main_category"]
+        else:
+            mapped_output.drop(columns=["main_category"], inplace=True, errors="ignore")
+
+        # penultimate_category
+        if want_penultimate and "penultimate_category" in filtered.columns:
+            mapped_output["penultimate_category"] = filtered["penultimate_category"]
+        else:
+            mapped_output.drop(columns=["penultimate_category"], inplace=True, errors="ignore")
+
+        # final_category
+        if want_final and "final_category" in filtered.columns:
+            mapped_output["final_category"] = filtered["final_category"]
+        else:
+            mapped_output.drop(columns=["final_category"], inplace=True, errors="ignore")
 
 
-# preview only if any created
-preview_cols = [cat_src_col] + [
-    c for c in ["main_category", "penultimate_category", "final_category"]
-    if c in filtered.columns
-]
-if len(preview_cols) > 1:
-    st.dataframe(filtered[preview_cols].head(preview_rows), width="stretch", height=280)
-else:
-    st.caption("No category fields selected.")
+    # preview only if any created
+    preview_cols = [cat_src_col] + [
+        c for c in ["main_category", "penultimate_category", "final_category"]
+        if c in filtered.columns
+    ]
+    if len(preview_cols) > 1:
+        st.dataframe(filtered[preview_cols].head(preview_rows), width="stretch", height=280)
+    else:
+        st.caption("No category fields selected.")
 
 # ---- Normalised feed download (post-category extraction) ----
 tidy_df = mapped_output if 'mapped_output' in locals() else filtered
 
-st.subheader("Download normalised product feed")
-st.dataframe(tidy_df.head(preview_rows), width="stretch", height=320)
-if st.button("Prepare normalised feed (Excel)", key="prep_normalised_feed_xlsx"):
-    st.session_state["_normalised_feed_xlsx_bytes"] = to_xlsx_bytes(tidy_df, sheet_name="Normalised Feed")
-if st.session_state.get("_normalised_feed_xlsx_bytes"):
+with st.container(border=True):
+    st.subheader("Download normalised product feed")
+    st.dataframe(tidy_df.head(preview_rows), width="stretch", height=320)
+    if st.button("Prepare normalised feed (Excel)", key="prep_normalised_feed_xlsx"):
+        st.session_state["_normalised_feed_xlsx_bytes"] = to_xlsx_bytes(tidy_df, sheet_name="Normalised Feed")
+    if st.session_state.get("_normalised_feed_xlsx_bytes"):
+        st.download_button(
+            "Download normalised feed (Excel)",
+            data=st.session_state["_normalised_feed_xlsx_bytes"],
+            file_name="normalised_feed.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_normalised_feed_xlsx",
+        )
     st.download_button(
-        "Download normalised feed (Excel)",
-        data=st.session_state["_normalised_feed_xlsx_bytes"],
-        file_name="normalised_feed.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="dl_normalised_feed_xlsx",
+        "Download normalised feed (CSV)",
+        to_csv_bytes(tidy_df),
+        "normalised_feed.csv",
+        "text/csv",
+        key="dl_normalised_feed",
     )
-st.download_button(
-    "Download normalised feed (CSV)",
-    to_csv_bytes(tidy_df),
-    "normalised_feed.csv",
-    "text/csv",
-    key="dl_normalised_feed",
-)
 
 ###################################
 # visual separation before keyword tools
 st.divider()
 
-# ==== Keyword combinations (named, 1–3 dims, many combos) ====
-st.subheader("Keyword combinations")
+# ==== Keyword combinations (named, 1-3 dims, many combos) ====
+with st.container(border=True):
+    st.subheader("Keyword combinations")
 
-source_df = mapped_output if 'mapped_output' in locals() else filtered
-all_cols = list(source_df.columns)
+    source_df = mapped_output if 'mapped_output' in locals() else filtered
+    all_cols = list(source_df.columns)
 
-# session state structure: [{ "fields": [...], "name": "..." }, ...]
-if "combos" not in st.session_state or not isinstance(st.session_state.combos, list):
-    st.session_state.combos = [{"fields": [], "name": ""}]
-
-# controls
-cols_bar = st.columns([1,1,1,1])
-with cols_bar[0]:
-    if st.button("Add another combination"):
-        st.session_state.combos.append({"fields": [], "name": ""})
-with cols_bar[1]:
-    if st.button("Clear all combinations"):
+    # session state structure: [{ "fields": [...], "name": "..." }, ...]
+    if "combos" not in st.session_state or not isinstance(st.session_state.combos, list):
         st.session_state.combos = [{"fields": [], "name": ""}]
 
-to_remove = []
-per_list_tables = []
+    # controls
+    cols_bar = st.columns([1,1,1,1])
+    with cols_bar[0]:
+        if st.button("Add another combination"):
+            st.session_state.combos.append({"fields": [], "name": ""})
+    with cols_bar[1]:
+        if st.button("Clear all combinations"):
+            st.session_state.combos = [{"fields": [], "name": ""}]
 
-def make_keywords(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
-    if not cols:
-        return pd.DataFrame(columns=["keyword", "Product Count", "Unique Product Groups"])
+    to_remove = []
+    per_list_tables = []
 
-    sub = df[cols].copy()
+    def make_keywords(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+        if not cols:
+            return pd.DataFrame(columns=["keyword", "Product Count", "Unique Product Groups"])
 
-    # clean nulls BEFORE string cast; then normalise
-    for c in cols:
-        sub[c] = sub[c].where(sub[c].notna(), "")  # pd.NA/NaN/None -> ""
-        sub[c] = sub[c].astype(str).str.strip().str.lower()
+        sub = df[cols].copy()
 
-    # drop literal "<na>" that comes from pandas StringDtype
-    sub = sub.replace({"<na>": ""})
+        # clean nulls BEFORE string cast; then normalise
+        for c in cols:
+            sub[c] = sub[c].where(sub[c].notna(), "")  # pd.NA/NaN/None -> ""
+            sub[c] = sub[c].astype(str).str.strip().str.lower()
 
-    INVALIDS = {"", "nan", "none", "null", "<na>"}
-    valid_mask = (~sub.isin(INVALIDS)).all(axis=1)
+        # drop literal "<na>" that comes from pandas StringDtype
+        sub = sub.replace({"<na>": ""})
 
-    if not valid_mask.any():
-        return pd.DataFrame(columns=["keyword", "Product Count", "Unique Product Groups"])
+        INVALIDS = {"", "nan", "none", "null", "<na>"}
+        valid_mask = (~sub.isin(INVALIDS)).all(axis=1)
 
-    s = sub.loc[valid_mask].apply(lambda row: " ".join(row.values), axis=1)
-    s = s.str.replace(r"\s+", " ", regex=True).str.strip()  # tidy spacing
+        if not valid_mask.any():
+            return pd.DataFrame(columns=["keyword", "Product Count", "Unique Product Groups"])
 
-    tmp = pd.DataFrame({"keyword": s})
-    if "image_group_id" in df.columns:
-        tmp["image_group_id"] = df.loc[tmp.index, "image_group_id"]
-        out = (tmp.groupby("keyword", as_index=False)
-                   .agg(**{
-                        "Product Count": ("keyword", "size"),
-                        "Unique Product Groups": ("image_group_id", lambda x: x.dropna().nunique()),
-                   }))
-    else:
-        out = (tmp.groupby("keyword", as_index=False)
-                   .agg(**{
-                        "Product Count": ("keyword", "size"),
-                   }))
-        out["Unique Product Groups"] = out["Product Count"]
+        s = sub.loc[valid_mask].apply(lambda row: " ".join(row.values), axis=1)
+        s = s.str.replace(r"\s+", " ", regex=True).str.strip()  # tidy spacing
 
-    return out
+        tmp = pd.DataFrame({"keyword": s})
+        if "image_group_id" in df.columns:
+            tmp["image_group_id"] = df.loc[tmp.index, "image_group_id"]
+            out = (tmp.groupby("keyword", as_index=False)
+                       .agg(**{
+                            "Product Count": ("keyword", "size"),
+                            "Unique Product Groups": ("image_group_id", lambda x: x.dropna().nunique()),
+                       }))
+        else:
+            out = (tmp.groupby("keyword", as_index=False)
+                       .agg(**{
+                            "Product Count": ("keyword", "size"),
+                       }))
+            out["Unique Product Groups"] = out["Product Count"]
+
+        return out
 
 
-for i, combo in enumerate(st.session_state.combos):
-    c = st.container(border=True)
-    c.markdown(f"**Combination {i+1}**")
+    for i, combo in enumerate(st.session_state.combos):
+        c = st.container(border=True)
+        c.markdown(f"**Combination {i+1}**")
 
-    # UI: name + up to 3 fields
-    name_col, f1, f2, f3, rm = c.columns([1.2, 1, 1, 1, 0.3])
+        # UI: name + up to 3 fields
+        name_col, f1, f2, f3, rm = c.columns([1.2, 1, 1, 1, 0.3])
 
-    # current fields
-    fields = combo.get("fields", [])
-    # inputs
-    name_val = name_col.text_input("List name", value=combo.get("name",""), key=f"combo_name_{i}", placeholder="Auto from fields")
+        # current fields
+        fields = combo.get("fields", [])
+        # inputs
+        name_val = name_col.text_input("List name", value=combo.get("name",""), key=f"combo_name_{i}", placeholder="Auto from fields")
 
-    a = f1.selectbox("Field 1", [""] + all_cols,
-                     index=(all_cols.index(fields[0])+1) if len(fields)>0 and fields[0] in all_cols else 0,
-                     key=f"cmb_{i}_a")
-    b = f2.selectbox("Field 2", [""] + all_cols,
-                     index=(all_cols.index(fields[1])+1) if len(fields)>1 and fields[1] in all_cols else 0,
-                     key=f"cmb_{i}_b")
-    d = f3.selectbox("Field 3", [""] + all_cols,
-                     index=(all_cols.index(fields[2])+1) if len(fields)>2 and fields[2] in all_cols else 0,
-                     key=f"cmb_{i}_c")
+        a = f1.selectbox("Field 1", [""] + all_cols,
+                         index=(all_cols.index(fields[0])+1) if len(fields)>0 and fields[0] in all_cols else 0,
+                         key=f"cmb_{i}_a")
+        b = f2.selectbox("Field 2", [""] + all_cols,
+                         index=(all_cols.index(fields[1])+1) if len(fields)>1 and fields[1] in all_cols else 0,
+                         key=f"cmb_{i}_b")
+        d = f3.selectbox("Field 3", [""] + all_cols,
+                         index=(all_cols.index(fields[2])+1) if len(fields)>2 and fields[2] in all_cols else 0,
+                         key=f"cmb_{i}_c")
 
-    chosen = [x for x in (a, b, d) if x]
-    auto_name = " + ".join(chosen) if chosen else ""
-    final_name = name_val.strip() or auto_name
+        chosen = [x for x in (a, b, d) if x]
+        auto_name = " + ".join(chosen) if chosen else ""
+        final_name = name_val.strip() or auto_name
 
-    # persist
-    st.session_state.combos[i] = {"fields": chosen, "name": final_name}
+        # persist
+        st.session_state.combos[i] = {"fields": chosen, "name": final_name}
 
-    with rm:
-        if st.button("Remove", key=f"rm_{i}"):
-            to_remove.append(i)
+        with rm:
+            if st.button("Remove", key=f"rm_{i}"):
+                to_remove.append(i)
 
-    # per-combo table
-    kc = make_keywords(source_df, chosen)
-    if final_name:
-        kc.insert(0, "list_name", final_name)
-    else:
-        kc.insert(0, "list_name", f"List {i+1}")
-    c.dataframe(kc.head(preview_rows), width="stretch", height=220)
-    # Excel prepared on click
-    if c.button(f"Prepare list {i+1} (Excel)", key=f"prep_list_{i+1}_xlsx"):
-        st.session_state[f"_list_{i+1}_xlsx_bytes"] = to_xlsx_bytes(kc, sheet_name=f"List {i+1}")
-    if st.session_state.get(f"_list_{i+1}_xlsx_bytes"):
+        # per-combo table
+        kc = make_keywords(source_df, chosen)
+        if final_name:
+            kc.insert(0, "list_name", final_name)
+        else:
+            kc.insert(0, "list_name", f"List {i+1}")
+        c.dataframe(kc.head(preview_rows), width="stretch", height=220)
+        # Excel prepared on click
+        if c.button(f"Prepare list {i+1} (Excel)", key=f"prep_list_{i+1}_xlsx"):
+            st.session_state[f"_list_{i+1}_xlsx_bytes"] = to_xlsx_bytes(kc, sheet_name=f"List {i+1}")
+        if st.session_state.get(f"_list_{i+1}_xlsx_bytes"):
+            c.download_button(
+                f"Download list {i+1} (Excel)",
+                data=st.session_state[f"_list_{i+1}_xlsx_bytes"],
+                file_name=f"keywords_list_{i+1}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"dl_list_{i+1}_xlsx"
+            )
         c.download_button(
-            f"Download list {i+1} (Excel)",
-            data=st.session_state[f"_list_{i+1}_xlsx_bytes"],
-            file_name=f"keywords_list_{i+1}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key=f"dl_list_{i+1}_xlsx"
+            f"Download list {i+1} CSV",
+            to_csv_bytes(kc),
+            f"keywords_list_{i+1}.csv",
+            "text/csv",
+            key=f"dl_list_{i+1}"
         )
-    c.download_button(
-        f"Download list {i+1} CSV",
-        to_csv_bytes(kc),
-        f"keywords_list_{i+1}.csv",
-        "text/csv",
-        key=f"dl_list_{i+1}"
+        per_list_tables.append(kc)
+
+    # remove requested
+    for idx in reversed(to_remove):
+        st.session_state.combos.pop(idx)
+
+    # Combined table: keep list_name so analysts can filter
+    combined_df = (
+        pd.concat(per_list_tables, ignore_index=True) if per_list_tables else
+        pd.DataFrame(columns=["list_name","keyword","Product Count","Unique Product Groups"])
     )
-    per_list_tables.append(kc)
-
-# remove requested
-for idx in reversed(to_remove):
-    st.session_state.combos.pop(idx)
-
-# Combined table: keep list_name so analysts can filter
-combined_df = (
-    pd.concat(per_list_tables, ignore_index=True) if per_list_tables else
-    pd.DataFrame(columns=["list_name","keyword","Product Count","Unique Product Groups"])
-)
 
 
 
@@ -897,366 +924,370 @@ combined_df = (
 source_df = tidy_df
 
 # Final section, keyword combos
-st.subheader("Combined keyword list")
-st.dataframe(combined_df.head(preview_rows), width="stretch", height=300)
-if st.button("Prepare combined keywords (Excel)", key="prep_combined_keywords_xlsx"):
-    st.session_state["_combined_keywords_xlsx_bytes"] = to_xlsx_bytes(combined_df, sheet_name="Combined Keywords")
-if st.session_state.get("_combined_keywords_xlsx_bytes"):
+with st.container(border=True):
+    st.subheader("Combined keyword list")
+    st.dataframe(combined_df.head(preview_rows), width="stretch", height=300)
+    if st.button("Prepare combined keywords (Excel)", key="prep_combined_keywords_xlsx"):
+        st.session_state["_combined_keywords_xlsx_bytes"] = to_xlsx_bytes(combined_df, sheet_name="Combined Keywords")
+    if st.session_state.get("_combined_keywords_xlsx_bytes"):
+        st.download_button(
+            "Download combined keywords (Excel)",
+            data=st.session_state["_combined_keywords_xlsx_bytes"],
+            file_name="keywords_combined.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_combined_keywords_xlsx",
+        )
     st.download_button(
-        "Download combined keywords (Excel)",
-        data=st.session_state["_combined_keywords_xlsx_bytes"],
-        file_name="keywords_combined.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="dl_combined_keywords_xlsx",
+        "Download combined keywords CSV",
+        to_csv_bytes(combined_df),
+        "keywords_combined.csv",
+        "text/csv",
     )
-st.download_button(
-    "Download combined keywords CSV",
-    to_csv_bytes(combined_df),
-    "keywords_combined.csv",
-    "text/csv",
-)
 
 # ==== Google Ads search volumes ====
-st.subheader("Google Ads search volumes")
+st.markdown('<div id="gads-card-anchor"></div>', unsafe_allow_html=True)
+with st.container(border=True):
+    st.subheader("Google Ads search volumes")
 
-# ---- Keyword count indicator ----
-if "combined_df" in locals() and not combined_df.empty:
-    st.metric("Keywords to send to Google Ads API", f"{len(combined_df):,}")
-else:
-    st.info("No keyword combinations generated yet.")
-
-# ---- Auth helper (secrets OR local yaml) ----
-def _norm_id(x):
-    return str(x).replace("-", "").strip() if x else ""
-
-def get_gads_client_and_customer_id() -> Tuple[object, str]:
-    from google.ads.googleads.client import GoogleAdsClient
-    try:
-        has_secrets = "google_ads" in st.secrets
-    except Exception:
-        has_secrets = False
-
-    if has_secrets:
-        s = st.secrets["google_ads"]
-        cfg = {
-            "developer_token": s["developer_token"],
-            "client_id": s["client_id"],
-            "client_secret": s["client_secret"],
-            "refresh_token": s["refresh_token"],
-            "login_customer_id": s.get("login_customer_id"),
-            "client_customer_id": s.get("client_customer_id"),
-            "use_proto_plus": True,
-        }
-        yaml_text = yaml.dump({k: v for k, v in cfg.items() if v is not None})
-        client = GoogleAdsClient.load_from_string(yaml_text, version="v20")
-        effective_id = _norm_id(s.get("client_customer_id")) or _norm_id(s.get("login_customer_id"))
-        return client, effective_id
-
-    yaml_path = Path(__file__).parent / "google-ads.yaml"
-    if not yaml_path.exists():
-        st.error("No Streamlit secrets and no local google-ads.yaml found.")
-        return None, ""
-
-    try:
-        with open(yaml_path, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-        client = GoogleAdsClient.load_from_storage(str(yaml_path), version="v20")
-        effective_id = _norm_id(cfg.get("client_customer_id")) or _norm_id(cfg.get("login_customer_id"))
-        return client, effective_id
-    except Exception as e:
-        st.error(f"Failed to load Google Ads client from {yaml_path.name}: {e}")
-        return None, ""
-
-# ---- User inputs ----
-c2, c3, c4 = st.columns([1,1,0.6])
-with c2:
-    geo_ids_str = st.text_input("Geo target IDs (comma)", value="2826", help="2826=UK, 2840=US")
-with c3:
-    language_id = st.text_input("Language ID", value="1000", help="1000=English")
-with c4:
-    if st.button("Clear results"):
-        st.session_state.pop("gads_results_df", None)
-        st.session_state.pop("gads_raw_json", None)
-        st.session_state.pop("gads_results_key", None)
-        st.success("Cleared cached Google Ads results.")
-
-# ---- Danger-styled fetch button ----
-st.markdown('<div style="--primary-color:#d9534f;">', unsafe_allow_html=True)
-run_fetch = st.button("Fetch Google Ads volumes", type="primary")
-st.markdown("</div>", unsafe_allow_html=True)
-
-def _parse_geo_ids(s: str) -> list[str]:
-    return [x.strip() for x in s.split(",") if x.strip()]
-
-QPS_SLEEP = 1.2  # seconds between requests to respect Google Ads 1 QPS limit
-
-def _sleep_with_retry_delay(retry_seconds: Optional[float], attempt: int) -> None:
-    if retry_seconds is not None:
-        time.sleep(retry_seconds + 1.0)
+    # ---- Keyword count indicator ----
+    if "combined_df" in locals() and not combined_df.empty:
+        st.metric("Keywords to send to Google Ads API", f"{len(combined_df):,}")
     else:
-        base = min(60.0, 4.0 * (2 ** max(attempt, 0)))
-        time.sleep(base + random.random())
+        st.info("No keyword combinations generated yet.")
 
-def batched(iterable, n: int):
-    it = iter(iterable)
-    size = max(1, n)
-    while True:
-        chunk = list(itertools.islice(it, size))
-        if not chunk:
-            break
-        yield chunk
+    # ---- Auth helper (secrets OR local yaml) ----
+    def _norm_id(x):
+        return str(x).replace("-", "").strip() if x else ""
 
-def fetch_historical_metrics_gads(client, customer_id: str, keywords: list[str],
-                                  geo_ids: list[str], language_id: str,
-                                  batch_size: int = 700) -> tuple[pd.DataFrame, list]:
-    if not keywords:
-        return pd.DataFrame(), []
-
-    try:
-        from google.protobuf.json_format import MessageToDict
-    except Exception:
-        MessageToDict = None
-
-    from google.api_core.retry import Retry, if_exception_type
-    from google.api_core import exceptions as gcore_exc
-    import grpc
-
-    googleads_service = client.get_service("GoogleAdsService")
-    idea_service = client.get_service("KeywordPlanIdeaService")
-    network_enum = client.enums.KeywordPlanNetworkEnum
-
-    grpc_retry = Retry(
-        predicate=if_exception_type(gcore_exc.ResourceExhausted, gcore_exc.ServiceUnavailable),
-        initial=4.0, maximum=60.0, multiplier=1.6,
-    )
-
-    out_rows, raw_results = [], []
-    total = len(keywords)
-    batches = math.ceil(total / max(1, batch_size))
-    prog = st.progress(0.0, text="Requesting batches…") if total else None
-
-    for idx, chunk in enumerate(batched(keywords, batch_size)):
-        req = client.get_type("GenerateKeywordHistoricalMetricsRequest")  # fresh instance
-        req.customer_id = customer_id
-        req.keywords.extend(chunk)
-        req.keyword_plan_network = network_enum.GOOGLE_SEARCH
-        req.language = googleads_service.language_constant_path(language_id)
+    def get_gads_client_and_customer_id() -> Tuple[object, str]:
+        from google.ads.googleads.client import GoogleAdsClient
         try:
+            has_secrets = "google_ads" in st.secrets
+        except Exception:
+            has_secrets = False
 
-            req.historical_metrics_options.year_month_range.include_zero_monthly_searches = True
-        except AttributeError:
-            pass
-        for gid in geo_ids:
-            req.geo_target_constants.append(googleads_service.geo_target_constant_path(gid))
-
-        attempts = 0
-        while True:
-            try:
-                time.sleep(QPS_SLEEP)
-                resp = grpc_retry(idea_service.generate_keyword_historical_metrics)(request=req)
-                break
-            except gcore_exc.ResourceExhausted as e:
-                attempts += 1
-                if attempts > 8:
-                    raise
-                retry_seconds: Optional[float] = None
-                m = re.search(r"Retry in (\d+)\s*second", str(e))
-                if m:
-                    retry_seconds = float(m.group(1))
-                _sleep_with_retry_delay(retry_seconds, attempts - 1)
-            except (gcore_exc.ServiceUnavailable, gcore_exc.DeadlineExceeded, grpc.RpcError):
-                attempts += 1
-                if attempts > 8:
-                    raise
-                _sleep_with_retry_delay(None, attempts - 1)
-
-        if MessageToDict and hasattr(resp, "results"):
-            raw_results.extend([MessageToDict(r._pb) for r in resp.results])
-        else:
-            for r in resp.results:
-                raw_results.append({
-                    "text": getattr(r, "text", ""),
-                    "closeVariants": list(getattr(r, "close_variants", [])),
-                })
-
-        for r in resp.results:
-            m = r.keyword_metrics
-            canonical = r.text.lower().strip()
-            variants = [v.lower().strip() for v in (list(r.close_variants) if r.close_variants else [])]
-            aliases = [canonical] + [v for v in variants if v]
-            base = {
-                "canonical_keyword": canonical,
-                "aliases": aliases,
-                "close_variants": ", ".join(variants) if variants else "",
-                "avg_monthly_searches": int(m.avg_monthly_searches) if m.avg_monthly_searches is not None else None,
-                "competition_index": int(m.competition_index) if m.competition_index is not None else None,
-                "competition_level": m.competition.name if hasattr(m.competition, "name") else str(m.competition),
-                "low_top_of_page_bid_micros": int(m.low_top_of_page_bid_micros) if m.low_top_of_page_bid_micros is not None else None,
-                "high_top_of_page_bid_micros": int(m.high_top_of_page_bid_micros) if m.high_top_of_page_bid_micros is not None else None,
+        if has_secrets:
+            s = st.secrets["google_ads"]
+            cfg = {
+                "developer_token": s["developer_token"],
+                "client_id": s["client_id"],
+                "client_secret": s["client_secret"],
+                "refresh_token": s["refresh_token"],
+                "login_customer_id": s.get("login_customer_id"),
+                "client_customer_id": s.get("client_customer_id"),
+                "use_proto_plus": True,
             }
-            if getattr(m, "monthly_search_volumes", None):
-                for mv in m.monthly_search_volumes:
-                    month_num = ["JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE",
-                                 "JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"].index(mv.month.name)+1
-                    out_rows.append(base | {
-                        "year": int(mv.year),
-                        "month": month_num,
-                        "monthly_searches": int(mv.monthly_searches) if mv.monthly_searches is not None else None,
-                    })
+            yaml_text = yaml.dump({k: v for k, v in cfg.items() if v is not None})
+            client = GoogleAdsClient.load_from_string(yaml_text, version="v20")
+            effective_id = _norm_id(s.get("client_customer_id")) or _norm_id(s.get("login_customer_id"))
+            return client, effective_id
+
+        yaml_path = Path(__file__).parent / "google-ads.yaml"
+        if not yaml_path.exists():
+            st.error("No Streamlit secrets and no local google-ads.yaml found.")
+            return None, ""
+
+        try:
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            client = GoogleAdsClient.load_from_storage(str(yaml_path), version="v20")
+            effective_id = _norm_id(cfg.get("client_customer_id")) or _norm_id(cfg.get("login_customer_id"))
+            return client, effective_id
+        except Exception as e:
+            st.error(f"Failed to load Google Ads client from {yaml_path.name}: {e}")
+            return None, ""
+
+    # ---- User inputs ----
+    c2, c3, c4 = st.columns([1,1,0.6])
+    with c2:
+        geo_ids_str = st.text_input("Geo target IDs (comma)", value="2826", help="2826=UK, 2840=US")
+    with c3:
+        language_id = st.text_input("Language ID", value="1000", help="1000=English")
+    with c4:
+        if st.button("Clear results"):
+            st.session_state.pop("gads_results_df", None)
+            st.session_state.pop("gads_raw_json", None)
+            st.session_state.pop("gads_results_key", None)
+            st.success("Cleared cached Google Ads results.")
+
+    # ---- Danger-styled fetch button ----
+    st.markdown('<div style="--primary-color:#d9534f;">', unsafe_allow_html=True)
+    run_fetch = st.button("Fetch Google Ads volumes", type="primary")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    def _parse_geo_ids(s: str) -> list[str]:
+        return [x.strip() for x in s.split(",") if x.strip()]
+
+    QPS_SLEEP = 1.2  # seconds between requests to respect Google Ads 1 QPS limit
+
+    def _sleep_with_retry_delay(retry_seconds: Optional[float], attempt: int) -> None:
+        if retry_seconds is not None:
+            time.sleep(retry_seconds + 1.0)
+        else:
+            base = min(60.0, 4.0 * (2 ** max(attempt, 0)))
+            time.sleep(base + random.random())
+
+    def batched(iterable, n: int):
+        it = iter(iterable)
+        size = max(1, n)
+        while True:
+            chunk = list(itertools.islice(it, size))
+            if not chunk:
+                break
+            yield chunk
+
+    def fetch_historical_metrics_gads(client, customer_id: str, keywords: list[str],
+                                      geo_ids: list[str], language_id: str,
+                                      batch_size: int = 700) -> tuple[pd.DataFrame, list]:
+        if not keywords:
+            return pd.DataFrame(), []
+
+        try:
+            from google.protobuf.json_format import MessageToDict
+        except Exception:
+            MessageToDict = None
+
+        from google.api_core.retry import Retry, if_exception_type
+        from google.api_core import exceptions as gcore_exc
+        import grpc
+
+        googleads_service = client.get_service("GoogleAdsService")
+        idea_service = client.get_service("KeywordPlanIdeaService")
+        network_enum = client.enums.KeywordPlanNetworkEnum
+
+        grpc_retry = Retry(
+            predicate=if_exception_type(gcore_exc.ResourceExhausted, gcore_exc.ServiceUnavailable),
+            initial=4.0, maximum=60.0, multiplier=1.6,
+        )
+
+        out_rows, raw_results = [], []
+        total = len(keywords)
+        batches = math.ceil(total / max(1, batch_size))
+        prog = st.progress(0.0, text="Requesting batches…") if total else None
+
+        for idx, chunk in enumerate(batched(keywords, batch_size)):
+            req = client.get_type("GenerateKeywordHistoricalMetricsRequest")  # fresh instance
+            req.customer_id = customer_id
+            req.keywords.extend(chunk)
+            req.keyword_plan_network = network_enum.GOOGLE_SEARCH
+            req.language = googleads_service.language_constant_path(language_id)
+            try:
+
+                req.historical_metrics_options.year_month_range.include_zero_monthly_searches = True
+            except AttributeError:
+                pass
+            for gid in geo_ids:
+                req.geo_target_constants.append(googleads_service.geo_target_constant_path(gid))
+
+            attempts = 0
+            while True:
+                try:
+                    time.sleep(QPS_SLEEP)
+                    resp = grpc_retry(idea_service.generate_keyword_historical_metrics)(request=req)
+                    break
+                except gcore_exc.ResourceExhausted as e:
+                    attempts += 1
+                    if attempts > 8:
+                        raise
+                    retry_seconds: Optional[float] = None
+                    m = re.search(r"Retry in (\d+)\s*second", str(e))
+                    if m:
+                        retry_seconds = float(m.group(1))
+                    _sleep_with_retry_delay(retry_seconds, attempts - 1)
+                except (gcore_exc.ServiceUnavailable, gcore_exc.DeadlineExceeded, grpc.RpcError):
+                    attempts += 1
+                    if attempts > 8:
+                        raise
+                    _sleep_with_retry_delay(None, attempts - 1)
+
+            if MessageToDict and hasattr(resp, "results"):
+                raw_results.extend([MessageToDict(r._pb) for r in resp.results])
             else:
-                out_rows.append(base | {"year": None, "month": None, "monthly_searches": None})
+                for r in resp.results:
+                    raw_results.append({
+                        "text": getattr(r, "text", ""),
+                        "closeVariants": list(getattr(r, "close_variants", [])),
+                    })
+
+            for r in resp.results:
+                m = r.keyword_metrics
+                canonical = r.text.lower().strip()
+                variants = [v.lower().strip() for v in (list(r.close_variants) if r.close_variants else [])]
+                aliases = [canonical] + [v for v in variants if v]
+                base = {
+                    "canonical_keyword": canonical,
+                    "aliases": aliases,
+                    "close_variants": ", ".join(variants) if variants else "",
+                    "avg_monthly_searches": int(m.avg_monthly_searches) if m.avg_monthly_searches is not None else None,
+                    "competition_index": int(m.competition_index) if m.competition_index is not None else None,
+                    "competition_level": m.competition.name if hasattr(m.competition, "name") else str(m.competition),
+                    "low_top_of_page_bid_micros": int(m.low_top_of_page_bid_micros) if m.low_top_of_page_bid_micros is not None else None,
+                    "high_top_of_page_bid_micros": int(m.high_top_of_page_bid_micros) if m.high_top_of_page_bid_micros is not None else None,
+                }
+                if getattr(m, "monthly_search_volumes", None):
+                    for mv in m.monthly_search_volumes:
+                        month_num = ["JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE",
+                                     "JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"].index(mv.month.name)+1
+                        out_rows.append(base | {
+                            "year": int(mv.year),
+                            "month": month_num,
+                            "monthly_searches": int(mv.monthly_searches) if mv.monthly_searches is not None else None,
+                        })
+                else:
+                    out_rows.append(base | {"year": None, "month": None, "monthly_searches": None})
+
+            if prog:
+                prog.progress(min((idx + 1) / max(batches, 1), 1.0))
 
         if prog:
-            prog.progress(min((idx + 1) / max(batches, 1), 1.0))
+            prog.progress(1.0, text="Google Ads batches complete.")
 
-    if prog:
-        prog.progress(1.0, text="Google Ads batches complete.")
-
-    df = pd.DataFrame(out_rows)
-    if not df.empty and "aliases" in df.columns:
-        df = df.explode("aliases", ignore_index=True).rename(columns={"aliases": "keyword_norm"})
-    else:
-        df["keyword_norm"] = ""
-    return df, raw_results
-
-# ---- Persist on fetch ----
-if run_fetch:
-    if "combined_df" not in locals() or combined_df.empty:
-        st.warning("Build a combined keyword list first.")
-    else:
-        client, effective_id = get_gads_client_and_customer_id()
-        if not client or not effective_id:
-            st.error("Google Ads credentials not available. Add them to Streamlit Secrets or a local google-ads.yaml.")
+        df = pd.DataFrame(out_rows)
+        if not df.empty and "aliases" in df.columns:
+            df = df.explode("aliases", ignore_index=True).rename(columns={"aliases": "keyword_norm"})
         else:
-            to_query = (combined_df["keyword"].astype(str).str.strip().str.lower()
-                        .replace("", pd.NA).dropna().unique().tolist())
-            geo_ids = _parse_geo_ids(geo_ids_str)
+            df["keyword_norm"] = ""
+        return df, raw_results
 
-            cache_key = ("gads_v20_synonyms", tuple(sorted(to_query)), tuple(sorted(geo_ids)), language_id)
-            if st.session_state.get("gads_results_key") != cache_key:
-                with st.spinner("Calling Google Ads API…"):
-                    gads_df, raw_json = fetch_historical_metrics_gads(client, effective_id, to_query, geo_ids, language_id)
-                st.session_state.gads_results_key = cache_key
-                st.session_state.gads_results_df = gads_df
-                st.session_state.gads_raw_json = raw_json
+    # ---- Persist on fetch ----
+    if run_fetch:
+        if "combined_df" not in locals() or combined_df.empty:
+            st.warning("Build a combined keyword list first.")
+        else:
+            client, effective_id = get_gads_client_and_customer_id()
+            if not client or not effective_id:
+                st.error("Google Ads credentials not available. Add them to Streamlit Secrets or a local google-ads.yaml.")
+            else:
+                to_query = (combined_df["keyword"].astype(str).str.strip().str.lower()
+                            .replace("", pd.NA).dropna().unique().tolist())
+                geo_ids = _parse_geo_ids(geo_ids_str)
 
-# ---- Always render results if cached ----
-def render_gads_results(combined_df: pd.DataFrame):
-    gdf = st.session_state.get("gads_results_df")
-    if gdf is None or gdf.empty:
-        return
-    if combined_df is None or combined_df.empty:
-        return
+                cache_key = ("gads_v20_synonyms", tuple(sorted(to_query)), tuple(sorted(geo_ids)), language_id)
+                if st.session_state.get("gads_results_key") != cache_key:
+                    with st.spinner("Calling Google Ads API…"):
+                        gads_df, raw_json = fetch_historical_metrics_gads(client, effective_id, to_query, geo_ids, language_id)
+                    st.session_state.gads_results_key = cache_key
+                    st.session_state.gads_results_df = gads_df
+                    st.session_state.gads_raw_json = raw_json
 
-    left = combined_df.assign(keyword_norm=combined_df["keyword"].str.lower().str.strip())
-    final_view = left.merge(gdf, on="keyword_norm", how="left").drop(columns=["keyword_norm"])
-    final_view["exact_match"] = final_view["keyword"].str.lower().str.strip().eq(final_view.get("canonical_keyword",""))
-    final_view["matched_to"] = final_view.get("canonical_keyword","")
+    # ---- Always render results if cached ----
+    def render_gads_results(combined_df: pd.DataFrame):
+        gdf = st.session_state.get("gads_results_df")
+        if gdf is None or gdf.empty:
+            return
+        if combined_df is None or combined_df.empty:
+            return
 
-    ordered = [
-        "list_name","keyword","Product Count","Unique Product Groups",
-        "avg_monthly_searches","competition_level","competition_index",
-        "low_top_of_page_bid_micros","high_top_of_page_bid_micros",
-        "year","month","monthly_searches",
-        "exact_match","matched_to","close_variants"
-    ]
-    final_view = final_view[[c for c in ordered if c in final_view.columns] +
-                            [c for c in final_view.columns if c not in ordered]]
+        left = combined_df.assign(keyword_norm=combined_df["keyword"].str.lower().str.strip())
+        final_view = left.merge(gdf, on="keyword_norm", how="left").drop(columns=["keyword_norm"])
+        final_view["exact_match"] = final_view["keyword"].str.lower().str.strip().eq(final_view.get("canonical_keyword",""))
+        final_view["matched_to"] = final_view.get("canonical_keyword","")
 
-    st.subheader("Keywords with Google Ads metrics")
-    st.dataframe(final_view.head(preview_rows), width="stretch", height=360)
-    # Excel prepared on click
-    if st.button("Prepare keywords + metrics (Excel)", key="prep_keywords_gads_unified_xlsx"):
-        st.session_state["_keywords_gads_unified_xlsx_bytes"] = to_xlsx_bytes(final_view, sheet_name="Keywords + Metrics")
-    if st.session_state.get("_keywords_gads_unified_xlsx_bytes"):
+        ordered = [
+            "list_name","keyword","Product Count","Unique Product Groups",
+            "avg_monthly_searches","competition_level","competition_index",
+            "low_top_of_page_bid_micros","high_top_of_page_bid_micros",
+            "year","month","monthly_searches",
+            "exact_match","matched_to","close_variants"
+        ]
+        final_view = final_view[[c for c in ordered if c in final_view.columns] +
+                                [c for c in final_view.columns if c not in ordered]]
+
+        st.subheader("Keywords with Google Ads metrics")
+        st.dataframe(final_view.head(preview_rows), width="stretch", height=360)
+        # Excel prepared on click
+        if st.button("Prepare keywords + metrics (Excel)", key="prep_keywords_gads_unified_xlsx"):
+            st.session_state["_keywords_gads_unified_xlsx_bytes"] = to_xlsx_bytes(final_view, sheet_name="Keywords + Metrics")
+        if st.session_state.get("_keywords_gads_unified_xlsx_bytes"):
+            st.download_button(
+                "Download keywords + Google Ads metrics (Excel)",
+                data=st.session_state["_keywords_gads_unified_xlsx_bytes"],
+                file_name="keywords_with_gads_metrics.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_keywords_gads_unified_xlsx"
+            )
         st.download_button(
-            "Download keywords + Google Ads metrics (Excel)",
-            data=st.session_state["_keywords_gads_unified_xlsx_bytes"],
-            file_name="keywords_with_gads_metrics.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="dl_keywords_gads_unified_xlsx"
-        )
-    st.download_button(
-        "Download keywords + Google Ads metrics (CSV)",
-        to_csv_bytes(final_view),
-        "keywords_with_gads_metrics.csv",
-        "text/csv",
-        key="dl_keywords_gads_unified"
-    )
-
-    raw_json = st.session_state.get("gads_raw_json", [])
-    if raw_json:
-        import json
-        st.download_button(
-            "Download raw API JSON",
-            json.dumps(raw_json, ensure_ascii=False, indent=2).encode("utf-8"),
-            "gads_historical_metrics_raw.json",
-            "application/json",
-            key="dl_gads_raw_json"
+            "Download keywords + Google Ads metrics (CSV)",
+            to_csv_bytes(final_view),
+            "keywords_with_gads_metrics.csv",
+            "text/csv",
+            key="dl_keywords_gads_unified"
         )
 
-render_gads_results(combined_df)
+        raw_json = st.session_state.get("gads_raw_json", [])
+        if raw_json:
+            import json
+            st.download_button(
+                "Download raw API JSON",
+                json.dumps(raw_json, ensure_ascii=False, indent=2).encode("utf-8"),
+                "gads_historical_metrics_raw.json",
+                "application/json",
+                key="dl_gads_raw_json"
+            )
+
+    render_gads_results(combined_df)
 
 # ==== Search volume charts (after Google Ads results) ====
-st.subheader("Search volume charts")
-gdf = st.session_state.get("gads_results_df")
-if gdf is None or gdf.empty or combined_df.empty:
-    st.info("Fetch Google Ads volumes first to plot charts.")
-else:
-    left = combined_df.assign(keyword_norm=combined_df["keyword"].str.lower().str.strip())
-    fv = left.merge(gdf, on="keyword_norm", how="left").dropna(subset=["year","month","monthly_searches"])
-    fv["date"] = pd.to_datetime(dict(year=fv["year"].astype(int), month=fv["month"].astype(int), day=1))
+with st.container(border=True):
+    st.subheader("Search volume charts")
+    gdf = st.session_state.get("gads_results_df")
+    if gdf is None or gdf.empty or combined_df.empty:
+        st.info("Fetch Google Ads volumes first to plot charts.")
+    else:
+        left = combined_df.assign(keyword_norm=combined_df["keyword"].str.lower().str.strip())
+        fv = left.merge(gdf, on="keyword_norm", how="left").dropna(subset=["year","month","monthly_searches"])
+        fv["date"] = pd.to_datetime(dict(year=fv["year"].astype(int), month=fv["month"].astype(int), day=1))
 
-    totals = (fv.groupby("list_name", as_index=False)["monthly_searches"].sum()
-                .sort_values("monthly_searches", ascending=False))
-    default_lists = totals["list_name"].head(6).tolist()
-    chosen_lists = st.multiselect("Lists to plot", totals["list_name"].tolist(), default_lists)
-    fv = fv[fv["list_name"].isin(chosen_lists)] if chosen_lists else fv
-    legend_sort = chosen_lists if chosen_lists else totals["list_name"].tolist()
+        totals = (fv.groupby("list_name", as_index=False)["monthly_searches"].sum()
+                    .sort_values("monthly_searches", ascending=False))
+        default_lists = totals["list_name"].head(6).tolist()
+        chosen_lists = st.multiselect("Lists to plot", totals["list_name"].tolist(), default_lists)
+        fv = fv[fv["list_name"].isin(chosen_lists)] if chosen_lists else fv
+        legend_sort = chosen_lists if chosen_lists else totals["list_name"].tolist()
 
-    import altair as alt
-    PALETTE = ["#F8F3DA", "#00E5FF", "#FF6B6B", "#FFD166", "#06D6A0", "#A66CFF", "#4D96FF"]
+        import altair as alt
+        PALETTE = ["#4C6A92", "#6F8F72", "#B97A57", "#8C6C99", "#C4A46B", "#5B7C99", "#9E6E6E"]
 
-    chron = (fv.groupby(["list_name","date"], as_index=False)["monthly_searches"].sum()
-               .sort_values("date"))
-    c1 = (alt.Chart(chron).mark_line(point=True, strokeWidth=2, interpolate="monotone")
-          .encode(
-              x=alt.X("yearmonth(date):T", title="Month", axis=alt.Axis(format="%b '%y")),
-              y=alt.Y("monthly_searches:Q", title="Total searches", axis=alt.Axis(format="~s")),
-              color=alt.Color("list_name:N", title="List",
-                              scale=alt.Scale(range=PALETTE), sort=legend_sort),
-              tooltip=["list_name",
-                       alt.Tooltip("yearmonth(date):T", title="Month"),
-                       alt.Tooltip("monthly_searches:Q", title="Searches", format="~s")],
-          )
-          .properties(title="Chronological search volume", width="container", height=320)
-          .configure_axis(grid=False, labelColor="#F8F3DA", titleColor="#F8F3DA")
-          .configure_legend(labelColor="#F8F3DA", titleColor="#F8F3DA")
-          .configure_view(strokeWidth=0, fill="transparent"))
-    st.altair_chart(c1, theme=None, use_container_width=True)
+        chron = (fv.groupby(["list_name","date"], as_index=False)["monthly_searches"].sum()
+                   .sort_values("date"))
+        c1 = (alt.Chart(chron).mark_line(point=True, strokeWidth=2, interpolate="monotone")
+              .encode(
+                  x=alt.X("yearmonth(date):T", title="Month", axis=alt.Axis(format="%b '%y")),
+                  y=alt.Y("monthly_searches:Q", title="Total searches", axis=alt.Axis(format="~s")),
+                  color=alt.Color("list_name:N", title="List",
+                                  scale=alt.Scale(range=PALETTE), sort=legend_sort),
+                  tooltip=["list_name",
+                           alt.Tooltip("yearmonth(date):T", title="Month"),
+                           alt.Tooltip("monthly_searches:Q", title="Searches", format="~s")],
+              )
+              .properties(title="Chronological search volume", width="container", height=320)
+              .configure_axis(grid=False, labelColor="#2b0573", titleColor="#2b0573")
+              .configure_legend(labelColor="#2b0573", titleColor="#2b0573")
+              .configure_view(strokeWidth=0, fill="transparent"))
+        st.altair_chart(c1, theme=None, use_container_width=True)
 
-    month_order = ["January","February","March","April","May","June","July","August","September","October","November","December"]
-    fv["month_name"] = pd.Categorical(fv["date"].dt.month_name(), categories=month_order, ordered=True)
-    season = (fv.groupby(["list_name","month_name"], as_index=False)["monthly_searches"].sum()
-                .dropna(subset=["month_name"]).sort_values(["list_name","month_name"]))
-    denom = season.groupby("list_name")["monthly_searches"].transform("max").clip(lower=1)
-    season["frac_of_peak"] = season["monthly_searches"] / denom
+        month_order = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+        fv["month_name"] = pd.Categorical(fv["date"].dt.month_name(), categories=month_order, ordered=True)
+        season = (fv.groupby(["list_name","month_name"], as_index=False)["monthly_searches"].sum()
+                    .dropna(subset=["month_name"]).sort_values(["list_name","month_name"]))
+        denom = season.groupby("list_name")["monthly_searches"].transform("max").clip(lower=1)
+        season["frac_of_peak"] = season["monthly_searches"] / denom
 
-    c2 = (alt.Chart(season).mark_line(point=True, strokeWidth=2, interpolate="monotone")
-          .encode(
-              x=alt.X("month_name:O", sort=month_order, title="Month (Jan→Dec)"),
-              y=alt.Y("frac_of_peak:Q", title="Seasonality", scale=alt.Scale(domain=[0,1]),
-                      axis=alt.Axis(format=".0%", values=[0,0.2,0.4,0.6,0.8,1])),
-              color=alt.Color("list_name:N", title="List",
-                              scale=alt.Scale(range=PALETTE), sort=legend_sort),
-              tooltip=["list_name","month_name",
-                       alt.Tooltip("frac_of_peak:Q", title="% of peak", format=".0%")],
-          )
-          .properties(title="Seasonality by list (normalised)", width="container", height=320)
-          .configure_axis(grid=False, labelColor="#F8F3DA", titleColor="#F8F3DA")
-          .configure_legend(labelColor="#F8F3DA", titleColor="#F8F3DA")
-          .configure_view(strokeWidth=0, fill="transparent"))
-    st.altair_chart(c2, theme=None, use_container_width=True)
+        c2 = (alt.Chart(season).mark_line(point=True, strokeWidth=2, interpolate="monotone")
+              .encode(
+                  x=alt.X("month_name:O", sort=month_order, title="Month (Jan→Dec)"),
+                  y=alt.Y("frac_of_peak:Q", title="Seasonality", scale=alt.Scale(domain=[0,1]),
+                          axis=alt.Axis(format=".0%", values=[0,0.2,0.4,0.6,0.8,1])),
+                  color=alt.Color("list_name:N", title="List",
+                                  scale=alt.Scale(range=PALETTE), sort=legend_sort),
+                  tooltip=["list_name","month_name",
+                           alt.Tooltip("frac_of_peak:Q", title="% of peak", format=".0%")],
+              )
+              .properties(title="Seasonality by list (normalised)", width="container", height=320)
+              .configure_axis(grid=False, labelColor="#2b0573", titleColor="#2b0573")
+              .configure_legend(labelColor="#2b0573", titleColor="#2b0573")
+              .configure_view(strokeWidth=0, fill="transparent"))
+        st.altair_chart(c2, theme=None, use_container_width=True)
 
 
 
