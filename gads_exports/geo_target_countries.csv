@@ -1,0 +1,219 @@
+id,name,country_code,target_type,status
+2004,Afghanistan,AF,Country,ENABLED
+2008,Albania,AL,Country,ENABLED
+2010,Antarctica,AQ,Country,ENABLED
+2012,Algeria,DZ,Country,ENABLED
+2016,American Samoa,AS,Country,ENABLED
+2020,Andorra,AD,Country,ENABLED
+2024,Angola,AO,Country,ENABLED
+2028,Antigua and Barbuda,AG,Country,ENABLED
+2031,Azerbaijan,AZ,Country,ENABLED
+2032,Argentina,AR,Country,ENABLED
+2036,Australia,AU,Country,ENABLED
+2040,Austria,AT,Country,ENABLED
+2044,The Bahamas,BS,Country,ENABLED
+2048,Bahrain,BH,Country,ENABLED
+2050,Bangladesh,BD,Country,ENABLED
+2051,Armenia,AM,Country,ENABLED
+2052,Barbados,BB,Country,ENABLED
+2056,Belgium,BE,Country,ENABLED
+2064,Bhutan,BT,Country,ENABLED
+2068,Bolivia,BO,Country,ENABLED
+2070,Bosnia and Herzegovina,BA,Country,ENABLED
+2072,Botswana,BW,Country,ENABLED
+2076,Brazil,BR,Country,ENABLED
+2084,Belize,BZ,Country,ENABLED
+2090,Solomon Islands,SB,Country,ENABLED
+2096,Brunei,BN,Country,ENABLED
+2100,Bulgaria,BG,Country,ENABLED
+2104,Myanmar (Burma),MM,Country,ENABLED
+2108,Burundi,BI,Country,ENABLED
+2112,Belarus,BY,Country,ENABLED
+2116,Cambodia,KH,Country,ENABLED
+2120,Cameroon,CM,Country,ENABLED
+2124,Canada,CA,Country,ENABLED
+2132,Cabo Verde,CV,Country,ENABLED
+2140,Central African Republic,CF,Country,ENABLED
+2144,Sri Lanka,LK,Country,ENABLED
+2148,Chad,TD,Country,ENABLED
+2152,Chile,CL,Country,ENABLED
+2156,China,CN,Country,ENABLED
+2162,Christmas Island,CX,Country,ENABLED
+2166,Cocos (Keeling) Islands,CC,Country,ENABLED
+2170,Colombia,CO,Country,ENABLED
+2174,Comoros,KM,Country,ENABLED
+2178,Republic of the Congo,CG,Country,ENABLED
+2180,Democratic Republic of the Congo,CD,Country,ENABLED
+2184,Cook Islands,CK,Country,ENABLED
+2188,Costa Rica,CR,Country,ENABLED
+2191,Croatia,HR,Country,ENABLED
+2196,Cyprus,CY,Country,ENABLED
+2203,Czechia,CZ,Country,ENABLED
+2204,Benin,BJ,Country,ENABLED
+2208,Denmark,DK,Country,ENABLED
+2212,Dominica,DM,Country,ENABLED
+2214,Dominican Republic,DO,Country,ENABLED
+2218,Ecuador,EC,Country,ENABLED
+2222,El Salvador,SV,Country,ENABLED
+2226,Equatorial Guinea,GQ,Country,ENABLED
+2231,Ethiopia,ET,Country,ENABLED
+2232,Eritrea,ER,Country,ENABLED
+2233,Estonia,EE,Country,ENABLED
+2239,South Georgia and the South Sandwich Islands,GS,Country,ENABLED
+2242,Fiji,FJ,Country,ENABLED
+2246,Finland,FI,Country,ENABLED
+2250,France,FR,Country,ENABLED
+2258,French Polynesia,PF,Country,ENABLED
+2260,French Southern and Antarctic Lands,TF,Country,ENABLED
+2262,Djibouti,DJ,Country,ENABLED
+2266,Gabon,GA,Country,ENABLED
+2268,Georgia,GE,Country,ENABLED
+2270,The Gambia,GM,Country,ENABLED
+2276,Germany,DE,Country,ENABLED
+2288,Ghana,GH,Country,ENABLED
+2296,Kiribati,KI,Country,ENABLED
+2300,Greece,GR,Country,ENABLED
+2308,Grenada,GD,Country,ENABLED
+2316,Guam,GU,Country,ENABLED
+2320,Guatemala,GT,Country,ENABLED
+2324,Guinea,GN,Country,ENABLED
+2328,Guyana,GY,Country,ENABLED
+2332,Haiti,HT,Country,ENABLED
+2334,Heard Island and McDonald Islands,HM,Country,ENABLED
+2336,Vatican City,VA,Country,ENABLED
+2340,Honduras,HN,Country,ENABLED
+2348,Hungary,HU,Country,ENABLED
+2352,Iceland,IS,Country,ENABLED
+2356,India,IN,Country,ENABLED
+2360,Indonesia,ID,Country,ENABLED
+2368,Iraq,IQ,Country,ENABLED
+2372,Ireland,IE,Country,ENABLED
+2376,Israel,IL,Country,ENABLED
+2380,Italy,IT,Country,ENABLED
+2384,Cote d'Ivoire,CI,Country,ENABLED
+2388,Jamaica,JM,Country,ENABLED
+2392,Japan,JP,Country,ENABLED
+2398,Kazakhstan,KZ,Country,ENABLED
+2400,Jordan,JO,Country,ENABLED
+2404,Kenya,KE,Country,ENABLED
+2410,South Korea,KR,Country,ENABLED
+2414,Kuwait,KW,Country,ENABLED
+2417,Kyrgyzstan,KG,Country,ENABLED
+2418,Laos,LA,Country,ENABLED
+2422,Lebanon,LB,Country,ENABLED
+2426,Lesotho,LS,Country,ENABLED
+2428,Latvia,LV,Country,ENABLED
+2430,Liberia,LR,Country,ENABLED
+2434,Libya,LY,Country,ENABLED
+2438,Liechtenstein,LI,Country,ENABLED
+2440,Lithuania,LT,Country,ENABLED
+2442,Luxembourg,LU,Country,ENABLED
+2450,Madagascar,MG,Country,ENABLED
+2454,Malawi,MW,Country,ENABLED
+2458,Malaysia,MY,Country,ENABLED
+2462,Maldives,MV,Country,ENABLED
+2466,Mali,ML,Country,ENABLED
+2470,Malta,MT,Country,ENABLED
+2478,Mauritania,MR,Country,ENABLED
+2480,Mauritius,MU,Country,ENABLED
+2484,Mexico,MX,Country,ENABLED
+2492,Monaco,MC,Country,ENABLED
+2496,Mongolia,MN,Country,ENABLED
+2498,Moldova,MD,Country,ENABLED
+2499,Montenegro,ME,Country,ENABLED
+2504,Morocco,MA,Country,ENABLED
+2508,Mozambique,MZ,Country,ENABLED
+2512,Oman,OM,Country,ENABLED
+2516,Namibia,NA,Country,ENABLED
+2520,Nauru,NR,Country,ENABLED
+2524,Nepal,NP,Country,ENABLED
+2528,Netherlands,NL,Country,ENABLED
+2531,Curacao,CW,Country,ENABLED
+2534,Sint Maarten,SX,Country,ENABLED
+2535,Caribbean Netherlands,BQ,Country,ENABLED
+2540,New Caledonia,NC,Country,ENABLED
+2548,Vanuatu,VU,Country,ENABLED
+2554,New Zealand,NZ,Country,ENABLED
+2558,Nicaragua,NI,Country,ENABLED
+2562,Niger,NE,Country,ENABLED
+2566,Nigeria,NG,Country,ENABLED
+2570,Niue,NU,Country,ENABLED
+2574,Norfolk Island,NF,Country,ENABLED
+2578,Norway,NO,Country,ENABLED
+2580,Northern Mariana Islands,MP,Country,ENABLED
+2581,United States Minor Outlying Islands,UM,Country,ENABLED
+2583,Micronesia,FM,Country,ENABLED
+2584,Marshall Islands,MH,Country,ENABLED
+2585,Palau,PW,Country,ENABLED
+2586,Pakistan,PK,Country,ENABLED
+2591,Panama,PA,Country,ENABLED
+2598,Papua New Guinea,PG,Country,ENABLED
+2600,Paraguay,PY,Country,ENABLED
+2604,Peru,PE,Country,ENABLED
+2608,Philippines,PH,Country,ENABLED
+2612,Pitcairn Islands,PN,Country,ENABLED
+2616,Poland,PL,Country,ENABLED
+2620,Portugal,PT,Country,ENABLED
+2624,Guinea-Bissau,GW,Country,ENABLED
+2626,Timor-Leste,TL,Country,ENABLED
+2634,Qatar,QA,Country,ENABLED
+2642,Romania,RO,Country,ENABLED
+2643,Russia,RU,Country,ENABLED
+2646,Rwanda,RW,Country,ENABLED
+2652,Saint Barthelemy,BL,Country,ENABLED
+2654,"Saint Helena, Ascension and Tristan da Cunha",SH,Country,ENABLED
+2659,Saint Kitts and Nevis,KN,Country,ENABLED
+2662,Saint Lucia,LC,Country,ENABLED
+2663,Saint Martin,MF,Country,ENABLED
+2666,Saint Pierre and Miquelon,PM,Country,ENABLED
+2670,Saint Vincent and the Grenadines,VC,Country,ENABLED
+2674,San Marino,SM,Country,ENABLED
+2678,Sao Tome and Principe,ST,Country,ENABLED
+2682,Saudi Arabia,SA,Country,ENABLED
+2686,Senegal,SN,Country,ENABLED
+2688,Serbia,RS,Country,ENABLED
+2690,Seychelles,SC,Country,ENABLED
+2694,Sierra Leone,SL,Country,ENABLED
+2702,Singapore,SG,Country,ENABLED
+2703,Slovakia,SK,Country,ENABLED
+2704,Vietnam,VN,Country,ENABLED
+2705,Slovenia,SI,Country,ENABLED
+2706,Somalia,SO,Country,ENABLED
+2710,South Africa,ZA,Country,ENABLED
+2716,Zimbabwe,ZW,Country,ENABLED
+2724,Spain,ES,Country,ENABLED
+2728,South Sudan,SS,Country,ENABLED
+2736,Sudan,SD,Country,ENABLED
+2740,Suriname,SR,Country,ENABLED
+2748,Eswatini,SZ,Country,ENABLED
+2752,Sweden,SE,Country,ENABLED
+2756,Switzerland,CH,Country,ENABLED
+2762,Tajikistan,TJ,Country,ENABLED
+2764,Thailand,TH,Country,ENABLED
+2768,Togo,TG,Country,ENABLED
+2772,Tokelau,TK,Country,ENABLED
+2776,Tonga,TO,Country,ENABLED
+2780,Trinidad and Tobago,TT,Country,ENABLED
+2784,United Arab Emirates,AE,Country,ENABLED
+2788,Tunisia,TN,Country,ENABLED
+2792,Turkiye,TR,Country,ENABLED
+2795,Turkmenistan,TM,Country,ENABLED
+2798,Tuvalu,TV,Country,ENABLED
+2800,Uganda,UG,Country,ENABLED
+2804,Ukraine,UA,Country,ENABLED
+2807,North Macedonia,MK,Country,ENABLED
+2818,Egypt,EG,Country,ENABLED
+2826,United Kingdom,GB,Country,ENABLED
+2831,Guernsey,GG,Country,ENABLED
+2832,Jersey,JE,Country,ENABLED
+2833,Isle of Man,IM,Country,ENABLED
+2834,Tanzania,TZ,Country,ENABLED
+2840,United States,US,Country,ENABLED
+2854,Burkina Faso,BF,Country,ENABLED
+2858,Uruguay,UY,Country,ENABLED
+2860,Uzbekistan,UZ,Country,ENABLED
+2862,Venezuela,VE,Country,ENABLED
+2876,Wallis and Futuna,WF,Country,ENABLED
+2882,Samoa,WS,Country,ENABLED
+2887,Yemen,YE,Country,ENABLED
+2894,Zambia,ZM,Country,ENABLED

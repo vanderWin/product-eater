@@ -23,7 +23,7 @@ div[data-testid="stDownloadButton"] > button {
   background:#2B0573; color:#fff; border:1px solid #2B0573;
 }
 div[data-testid="stDownloadButton"] > button:hover {
-  filter: brightness(0.92);
+  background:#730572; color:#fff; border-color:#730572;
 }
 
 .danger-scope { --primary-color:#d9534f; }
@@ -285,11 +285,11 @@ if df is not None and not df.empty:
     if st.session_state.get("_source_xlsx_sig") != file_sig:
         st.session_state.pop("_source_xlsx_bytes", None)
         st.session_state["_source_xlsx_sig"] = file_sig
-    if st.button("Prepare Excel", key="prep_source_xlsx", help="Generate Excel for download"):
+    if st.button("Generate Excel Version", key="prep_source_xlsx", help="Generate Excel for download"):
         st.session_state["_source_xlsx_bytes"] = to_xlsx_bytes(df, sheet_name="Data")
     if st.session_state.get("_source_xlsx_bytes"):
         st.download_button(
-            "Download Excel",
+            "Download Excel Version",
             data=st.session_state["_source_xlsx_bytes"],
             file_name=xlsx_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -334,7 +334,8 @@ div[data-testid="stDataEditor"] thead div[role="columnheader"] {
 # Anchor + container so we can style the container via CSS (next sibling)
 st.markdown('<div id="preview-card-anchor"></div>', unsafe_allow_html=True)
 with st.container():
-    st.subheader("Preview and Select Dimensions to Analyse")
+    st.subheader("1. Preview and Select Dimensions to Analyse")
+    st.caption("Sense check the default columns ticked are enough for your analysis. An example values are shown below.")
 
     # initialise keep_map once
     if "keep_map" not in st.session_state:
@@ -426,7 +427,8 @@ with st.container():
 
 # ---- Optional filters ----
 with st.container(border=True):
-    st.subheader("Apply filters (optional)")
+    st.subheader("2. Apply filters (optional)")
+    st.caption("Use this section to apply filters and tidy your data. Should out of stock items be excluded? Perhaps second hand items aren't part of your analsysis.")
 
     filters = {}
     for col in keep_cols:
@@ -459,13 +461,13 @@ with st.container(border=True):
 
 # ---- Product groups by image ----
 with st.container(border=True):
-    st.subheader("Product groups by image")
+    st.subheader("3. Product groups by image")
 
     # Choose source column (prefer additional image link)
     _f_norm_to_orig = {norm(c): c for c in filtered.columns}
     img_wanted = [
-        "additional image link", "image link",
-        "additional_image_link", "image_link",
+        "image link", "additional image link",
+        "image_link", "additional_image_link",
     ]
     img_wanted_norm = [norm(w) for w in img_wanted]
     # Deduplicate while preserving order
@@ -480,15 +482,6 @@ with st.container(border=True):
     if not img_candidates:
         st.info("No image fields detected. Add one of: additional image link, image link.")
     else:
-        # default to additional image link if present
-        default_norm = norm("additional image link") if norm("additional image link") in _f_norm_to_orig else img_wanted_norm[0]
-        default_idx = 0
-        if default_norm in _f_norm_to_orig and _f_norm_to_orig[default_norm] in img_candidates:
-            default_idx = img_candidates.index(_f_norm_to_orig[default_norm])
-
-        img_col = st.selectbox("Group by image column", options=img_candidates, index=default_idx,
-                               help="Groups products sharing the same first image URL (ignoring blanks).")
-
         # Extract first URL if multiple are present
         _url_re = re.compile(r"https?://[^\s,]+", flags=re.I)
         def _first_url(v: str) -> str:
@@ -497,8 +490,40 @@ with st.container(border=True):
             m = _url_re.findall(v)
             return m[0].strip() if m else ""
 
-        keys = filtered[img_col].astype(str).map(_first_url).str.strip()
-        has_key = keys.ne("")
+        stats_by_col = {}
+        for col in img_candidates:
+            keys = filtered[col].astype(str).map(_first_url).str.strip()
+            has_key = keys.ne("")
+            stats_by_col[col] = {
+                "keys": keys,
+                "has_key": has_key,
+                "group_count": int(keys[has_key].nunique()),
+                "sku_count": int(has_key.sum()),
+            }
+
+        if len(img_candidates) > 1:
+            st.caption("Compare image columns before selecting a grouping column.")
+            metric_cols = st.columns(len(img_candidates))
+            for slot, col in zip(metric_cols, img_candidates):
+                slot.markdown(f"**{col}**")
+                slot.metric("Product groups", f"{stats_by_col[col]['group_count']:,}")
+                slot.metric("SKUs (rows with image)", f"{stats_by_col[col]['sku_count']:,}")
+        else:
+            col = img_candidates[0]
+            st.metric("Product groups", f"{stats_by_col[col]['group_count']:,}")
+            st.metric("SKUs (rows with image)", f"{stats_by_col[col]['sku_count']:,}")
+
+        default_col = max(img_candidates, key=lambda c: stats_by_col[c]["group_count"])
+        default_idx = img_candidates.index(default_col)
+        img_col = st.selectbox(
+            "Group by image column",
+            options=img_candidates,
+            index=default_idx,
+            help="Groups products sharing the same first image URL (ignoring blanks).",
+        )
+
+        keys = stats_by_col[img_col]["keys"]
+        has_key = stats_by_col[img_col]["has_key"]
         # Assign stable 1-based group ids for rows with a URL
         codes = pd.Series(pd.NA, index=filtered.index, dtype="Int64")
         if has_key.any():
@@ -506,14 +531,10 @@ with st.container(border=True):
             codes.loc[has_key] = pd.array(fact, dtype="Int64")
         filtered["image_group_id"] = codes
 
-        grp_count = int(keys[has_key].nunique())
-        c1, c2 = st.columns(2)
-        c1.metric("Product groups", f"{grp_count:,}")
-        c2.metric("SKUs (rows)", f"{len(filtered):,}")
-
 # ---- Colour summary ----
 with st.container(border=True):
-    st.subheader("Colour summary")
+    st.subheader("4. Colour summary")
+    st.caption("This is the percentage of products grouped by colour. You may want to map any strange sounding colours in step 6 below.")
 
     # Robustly detect colour column(s) ignoring case/spaces
     _f_norm_to_orig = {norm(c): c for c in filtered.columns}
@@ -560,7 +581,8 @@ with st.container(border=True):
 
 # ---- Colour mapping (index-safe: use Series.map, not merge) ----
 with st.container(border=True):
-    st.subheader("Colour mapping")
+    st.subheader("5. Colour mapping")
+    st.caption("This section is for grouping the odd colour names used by brands to more generic colours. E.g. 'midnight panther' could just be 'black'.")
 
     # Robustly detect possible colour source columns (ignore case/spaces)
     _f_norm_to_orig = {norm(c): c for c in filtered.columns}
@@ -607,7 +629,8 @@ with st.container(border=True):
                     .value_counts().rename_axis("Unmapped Colour").reset_index(name="Product Count")
                 )
 
-                st.subheader("Map unmapped colours")
+                st.subheader("6. Map unmapped colours")
+                st.caption("These are the oddly named colours that won't be used to create keyword research. If the product count is high enough, map to a generic colour using the drop-downs provided.")
                 metric_slot = st.empty()
 
                 if unmapped_now.empty:
@@ -682,7 +705,8 @@ with st.container(border=True):
 
 # ==== Category extraction (auto via checkboxes, no button) ====
 with st.container(border=True):
-    st.subheader("Category extraction")
+    st.subheader("7. Category extraction")
+    st.caption("If available, select a column to use to create product categories with. This could be the 'google product category' column, or sometimes a 'product type' column. Creates additional columns to group by.")
 
     candidates = [c for c in ["google product category", "product type"] if c in filtered.columns]
     default_col = candidates[0] if candidates else list(filtered.columns)[0]
@@ -760,7 +784,8 @@ with st.container(border=True):
 tidy_df = mapped_output if 'mapped_output' in locals() else filtered
 
 with st.container(border=True):
-    st.subheader("Download normalised product feed")
+    st.subheader("8. Download normalised product feed")
+    st.caption("All the columns you've created so far in one big list. Useful for seeing product info at a SKU level.")
     st.dataframe(tidy_df.head(preview_rows), width="stretch", height=320)
     if st.button("Prepare normalised feed (Excel)", key="prep_normalised_feed_xlsx"):
         st.session_state["_normalised_feed_xlsx_bytes"] = to_xlsx_bytes(tidy_df, sheet_name="Normalised Feed")
@@ -786,7 +811,8 @@ st.divider()
 
 # ==== Keyword combinations (named, 1-3 dims, many combos) ====
 with st.container(border=True):
-    st.subheader("Keyword combinations")
+    st.subheader("9. Keyword combinations")
+    st.caption("Combine different columns together to make keyword lists. You can give your lists custom names if required. Combine upto three different fields, create as many lists as needed using the button below.")
 
     source_df = mapped_output if 'mapped_output' in locals() else filtered
     all_cols = list(source_df.columns)
@@ -798,7 +824,7 @@ with st.container(border=True):
     # controls
     cols_bar = st.columns([1,1,1,1])
     with cols_bar[0]:
-        if st.button("Add another combination"):
+        if st.button("Add another list to the stack"):
             st.session_state.combos.append({"fields": [], "name": ""})
     with cols_bar[1]:
         if st.button("Clear all combinations"):
@@ -925,7 +951,8 @@ source_df = tidy_df
 
 # Final section, keyword combos
 with st.container(border=True):
-    st.subheader("Combined keyword list")
+    st.subheader("10. Combined keyword list")
+    st.caption("All of your keyword lists stacked together - this is what will be passed to Google Ads for search volumes")
     st.dataframe(combined_df.head(preview_rows), width="stretch", height=300)
     if st.button("Prepare combined keywords (Excel)", key="prep_combined_keywords_xlsx"):
         st.session_state["_combined_keywords_xlsx_bytes"] = to_xlsx_bytes(combined_df, sheet_name="Combined Keywords")
@@ -947,7 +974,8 @@ with st.container(border=True):
 # ==== Google Ads search volumes ====
 st.markdown('<div id="gads-card-anchor"></div>', unsafe_allow_html=True)
 with st.container(border=True):
-    st.subheader("Google Ads search volumes")
+    st.subheader("11. Google Ads search volumes")
+    st.caption("This section is for displaying seasonal trends and recent search volume history. By default we target United Kingdom and English.")
 
     # ---- Keyword count indicator ----
     if "combined_df" in locals() and not combined_df.empty:
@@ -997,12 +1025,88 @@ with st.container(border=True):
             st.error(f"Failed to load Google Ads client from {yaml_path.name}: {e}")
             return None, ""
 
+    @st.cache_data(show_spinner=False)
+    def load_gads_constants():
+        base = Path(__file__).parent / "gads_exports"
+        countries_path = base / "geo_target_countries.csv"
+        languages_path = base / "language_constants.csv"
+        if not countries_path.exists() or not languages_path.exists():
+            return None, None
+        try:
+            countries = pd.read_csv(countries_path, dtype=str).fillna("")
+            languages = pd.read_csv(languages_path, dtype=str).fillna("")
+        except Exception:
+            return None, None
+        if "status" in countries.columns:
+            countries = countries[countries["status"].str.upper() == "ENABLED"]
+        return countries, languages
+
     # ---- User inputs ----
+    countries_df, languages_df = load_gads_constants()
+    use_dropdowns = countries_df is not None and languages_df is not None
+    if not use_dropdowns:
+        st.info("Google Ads country/language lists not found. Run the export script to enable dropdowns.")
+
+    geo_ids = []
+    language_id = ""
     c2, c3, c4 = st.columns([1,1,0.6])
     with c2:
-        geo_ids_str = st.text_input("Geo target IDs (comma)", value="2826", help="2826=UK, 2840=US")
+        if use_dropdowns:
+            countries_df = countries_df.copy()
+            countries_df["id"] = countries_df["id"].astype(str)
+            countries_df["name"] = countries_df["name"].fillna("")
+            if "country_code" in countries_df.columns:
+                countries_df["country_code"] = countries_df["country_code"].fillna("")
+            countries_df = countries_df.sort_values("name")
+            country_ids = countries_df["id"].tolist()
+            country_name_map = dict(zip(countries_df["id"], countries_df["name"]))
+            default_country_id = ""
+            if "country_code" in countries_df.columns:
+                match = countries_df[countries_df["country_code"].str.upper() == "GB"]
+                if not match.empty:
+                    default_country_id = str(match.iloc[0]["id"])
+            if not default_country_id:
+                match = countries_df[countries_df["name"].str.lower() == "united kingdom"]
+                if not match.empty:
+                    default_country_id = str(match.iloc[0]["id"])
+            default_idx = country_ids.index(default_country_id) if default_country_id in country_ids else 0
+            selected_country_id = st.selectbox(
+                "Country",
+                options=country_ids,
+                index=default_idx,
+                format_func=lambda x: country_name_map.get(x, x),
+            )
+            if selected_country_id:
+                geo_ids = [selected_country_id]
+        else:
+            geo_ids_str = st.text_input("Geo target IDs (comma)", value="2826", help="2826=UK, 2840=US")
+            geo_ids = [x.strip() for x in geo_ids_str.split(",") if x.strip()]
     with c3:
-        language_id = st.text_input("Language ID", value="1000", help="1000=English")
+        if use_dropdowns:
+            languages_df = languages_df.copy()
+            languages_df["id"] = languages_df["id"].astype(str)
+            languages_df["name"] = languages_df["name"].fillna("")
+            if "code" in languages_df.columns:
+                languages_df["code"] = languages_df["code"].fillna("")
+            language_ids = languages_df["id"].tolist()
+            language_name_map = dict(zip(languages_df["id"], languages_df["name"]))
+            default_language_id = ""
+            match = languages_df[languages_df["name"].str.lower() == "english"]
+            if not match.empty:
+                default_language_id = str(match.iloc[0]["id"])
+            if not default_language_id and "code" in languages_df.columns:
+                match = languages_df[languages_df["code"].str.lower() == "en"]
+                if not match.empty:
+                    default_language_id = str(match.iloc[0]["id"])
+            default_idx = language_ids.index(default_language_id) if default_language_id in language_ids else 0
+            language_id = st.selectbox(
+                "Language",
+                options=language_ids,
+                index=default_idx,
+                format_func=lambda x: language_name_map.get(x, x),
+            )
+        else:
+            language_id = st.text_input("Language ID", value="1000", help="1000=English")
     with c4:
         if st.button("Clear results"):
             st.session_state.pop("gads_results_df", None)
@@ -1014,9 +1118,6 @@ with st.container(border=True):
     st.markdown('<div style="--primary-color:#d9534f;">', unsafe_allow_html=True)
     run_fetch = st.button("Fetch Google Ads volumes", type="primary")
     st.markdown("</div>", unsafe_allow_html=True)
-
-    def _parse_geo_ids(s: str) -> list[str]:
-        return [x.strip() for x in s.split(",") if x.strip()]
 
     QPS_SLEEP = 1.2  # seconds between requests to respect Google Ads 1 QPS limit
 
@@ -1160,15 +1261,16 @@ with st.container(border=True):
             else:
                 to_query = (combined_df["keyword"].astype(str).str.strip().str.lower()
                             .replace("", pd.NA).dropna().unique().tolist())
-                geo_ids = _parse_geo_ids(geo_ids_str)
-
-                cache_key = ("gads_v20_synonyms", tuple(sorted(to_query)), tuple(sorted(geo_ids)), language_id)
-                if st.session_state.get("gads_results_key") != cache_key:
-                    with st.spinner("Calling Google Ads API…"):
-                        gads_df, raw_json = fetch_historical_metrics_gads(client, effective_id, to_query, geo_ids, language_id)
-                    st.session_state.gads_results_key = cache_key
-                    st.session_state.gads_results_df = gads_df
-                    st.session_state.gads_raw_json = raw_json
+                if not geo_ids or not language_id:
+                    st.warning("Select a country and language before fetching Google Ads volumes.")
+                else:
+                    cache_key = ("gads_v20_synonyms", tuple(sorted(to_query)), tuple(sorted(geo_ids)), language_id)
+                    if st.session_state.get("gads_results_key") != cache_key:
+                        with st.spinner("Calling Google Ads API…"):
+                            gads_df, raw_json = fetch_historical_metrics_gads(client, effective_id, to_query, geo_ids, language_id)
+                        st.session_state.gads_results_key = cache_key
+                        st.session_state.gads_results_df = gads_df
+                        st.session_state.gads_raw_json = raw_json
 
     # ---- Always render results if cached ----
     def render_gads_results(combined_df: pd.DataFrame):
@@ -1193,7 +1295,7 @@ with st.container(border=True):
         final_view = final_view[[c for c in ordered if c in final_view.columns] +
                                 [c for c in final_view.columns if c not in ordered]]
 
-        st.subheader("Keywords with Google Ads metrics")
+        st.subheader("12. Keywords with Google Ads metrics")
         st.dataframe(final_view.head(preview_rows), width="stretch", height=360)
         # Excel prepared on click
         if st.button("Prepare keywords + metrics (Excel)", key="prep_keywords_gads_unified_xlsx"):
