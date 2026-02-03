@@ -47,6 +47,18 @@ div[data-testid="stDownloadButton"] > button:hover {
   padding: 0;
 }
 
+#instructions-anchor + div[data-testid="stExpander"] {
+  background: #ffffff;
+  border: 1px solid #e6e9f0;
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(17, 24, 39, 0.08);
+  margin: 16px 0 20px;
+}
+#instructions-anchor + div[data-testid="stExpander"] > details > summary {
+  font-weight: 600;
+  color: #2b0573;
+}
+
 #gads-card-anchor + div[data-testid="stVerticalBlock"] {
   border-color: #d9534f;
   box-shadow: 0 8px 20px rgba(217, 83, 79, 0.25);
@@ -140,6 +152,75 @@ def to_xlsx_bytes(df: pd.DataFrame, sheet_name: str = "Data") -> bytes:
 
 
 # === Feed ingest (TSV / CSV / Excel) ===
+st.markdown('<div id="instructions-anchor"></div>', unsafe_allow_html=True)
+with st.expander("Instructions", expanded=False):
+    st.markdown(
+        """
+**Getting started**
+- Log into Merchant Center, navigate to the right client, open the Products tab, and export all products.
+- Unpack the archive Google gives you so you can access the TSV. If you are on Windows and there is a warning about errors, skip it.
+- Browse for your TSV or drop it into the upload area below, then move through the sections to refine the feed into a more practical list of keywords.
+
+**Section 1: Preview and select columns**
+- The app tells you how many products it found, previews the top 200 rows, and lets you select which columns to work with.
+- The default selected columns are usually what you want when facet hunting. Select any fields you want to filter on or create keyword lists from.
+
+**Section 2: Filters**
+- Screen out anything irrelevant to your analysis. For example, filter to English (language column), or use a feed label like "GB" to separate markets.
+- You might also filter on availability and condition to focus on in-stock items that are not second-hand.
+
+**Section 3: Grouping by image**
+- We need a way to estimate how many products a keyword combination represents. Feeds list every SKU/MPN, but most people think in product groups.
+- We use the image URL to group SKUs, since a product image is typically shared across sizes. This can reduce 50K SKUs to 5K product groups.
+- By default the app picks the image URL that yields the most product groups. Sense check the chosen column (image link or additional image link).
+
+**Section 4: Colour summary**
+- Sense check which column is used for colour counts, plus the product count and percentage for each colour.
+- For example, Black or Navy might represent 7-10% of the feed.
+
+**Section 5/6: Colour mapping**
+- Group detailed colours into a more generic set to improve keyword research.
+- By default, common colours are mapped automatically, but you may want to map high-volume leftovers manually.
+- This is optional, but worthwhile if a colour has a significant product count. Some feeds misuse the colour field with values like "trench" or "classic."
+- Use `generic_colour` going forward to avoid researching colours like "midnight leopard."
+
+**Section 7: Category extraction**
+- Infer product types from text strings, usually from the `product type` field.
+- Choose which segment to extract: first, penultimate, or last segment.
+- Example: "Rugby Shirts > Mens > Blue > XL" often works best as "Rugby Shirts" so size/colour/gender come from other fields.
+
+**Section 8: Normalised product feed**
+- If you are done, download the cleaned feed as CSV or Excel.
+- If you want keyword combinations, continue to the next section.
+
+**Section 9: Keyword combinations**
+- Combine fields to create keyword lists, then validate them with product counts and product groups.
+- You can create multiple lists and name each one. Example: `main_category` gives top-level terms like "polo shirts."
+- You can add another list with `age_gender_segment` + `main_category` to get phrases like "mens polo shirts."
+- For deeper granularity, use `age_gender_segment` + `main_category` + `generic_colour` for phrases like "mens blue polo shirts."
+- Order matters. "Blue mens polo shirts" implies something else than "mens blue polo shirts."
+
+**Section 10: Combined keyword list**
+- Sense check the phrases, product counts, and product groups.
+- Export the list if needed.
+
+**Section 11: Google Ads Search Volumes**
+- The app submits combined keywords to Google Ads and fetches search volumes for your selected country and language.
+- Results run in batches. If you have more than ~1K phrases, be patient while it completes.
+
+**Section 12: Keywords with Google Ads metrics**
+- Results are returned as one row per keyword per month for seasonality analysis.
+- Google Ads only returns the last 12 months via API.
+- Two charts are shown: total search volume by list over the last 12 months, and normalised seasonality by month.
+- You can download chart data or pivot the Keywords and Metrics export to the same effect.
+
+**Note on `age_gender_segment`**
+- This is derived from the `gender` and `age_group` fields (for example, "male" + "adult" becomes "mens").
+- We avoid possessive apostrophes because the Google Ads API filters them out.
+- Everything is forced to lowercase for the same reason.
+        """
+    )
+
 st.header("Feed Preview & Column Picker")
 
 uploaded_file = st.file_uploader(
@@ -871,6 +952,10 @@ with st.container(border=True):
                        }))
             out["Unique Product Groups"] = out["Product Count"]
 
+        out = out.sort_values(
+            ["Product Count", "Unique Product Groups", "keyword"],
+            ascending=[False, False, True],
+        ).reset_index(drop=True)
         return out
 
 
