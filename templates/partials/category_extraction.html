@@ -1,0 +1,58 @@
+<section class="section-card" id="section-categories">
+  <h3>6. Category Extraction</h3>
+  <p class="section-caption">Split a column like <code>product type</code> into separate category fields.</p>
+
+  <form hx-post="{{ url_for('step_categories') }}"
+        hx-target="#section-categories"
+        hx-swap="outerHTML"
+        hx-indicator="#spinner-categories"
+        hx-trigger="change delay:150ms, submit">
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="cat_src_col">Column to split into categories</label>
+        <select name="cat_src_col" id="cat_src_col">
+          {% for col in all_cols %}
+          <option value="{{ col }}" {% if col == cat_src_col %}selected{% endif %}>{{ col }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="checkbox-row">
+      <label class="checkbox-label">
+        <input type="checkbox" name="want_main" value="1" {% if want_main %}checked{% endif %}>
+        Create <strong>Main Category</strong> (first segment)
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" name="want_penultimate" value="1" {% if want_penultimate %}checked{% endif %}>
+        Create <strong>Penultimate Category</strong> (second-to-last)
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" name="want_final" value="1" {% if want_final %}checked{% endif %}>
+        Create <strong>Final Category</strong> (last segment)
+      </label>
+    </div>
+
+    <div class="form-actions">
+      <span class="section-caption">Updates apply automatically.</span>
+      <span id="spinner-categories" class="htmx-indicator spinner">⏳</span>
+    </div>
+  </form>
+
+  {% if preview_df is not none and preview_df | length > 0 %}
+  <div class="table-scroll preview-table-wrap">
+    <table class="feed-table preview-table">
+      <thead><tr>{% for col in preview_df.columns %}<th>{{ col }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for _, row in preview_df.iterrows() %}
+        <tr>{% for val in row %}<td>{{ val | string | truncate(80) }}</td>{% endfor %}</tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="section-caption">No category fields selected.</p>
+  {% endif %}
+</section>
+

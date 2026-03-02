@@ -1,0 +1,75 @@
+<section class="section-card gads-card" id="section-gads-config">
+  <h3>10. Google Ads Search Volumes</h3>
+  <p class="section-caption">Fetch seasonal search volume history. Defaults to United Kingdom and English.</p>
+
+  {% if keyword_count is defined and keyword_count > 0 %}
+  <div class="metric-card">
+    <span class="metric-value">{{ '{:,}'.format(keyword_count) }}</span>
+    <span class="metric-label">Keywords to send to Google Ads API</span>
+  </div>
+  {% else %}
+  <p class="info-banner">No keyword combinations generated yet. Complete Section 9 first.</p>
+  {% endif %}
+
+  <form hx-post="{{ url_for('gads_fetch_start') }}"
+        hx-target="#section-gads"
+        hx-swap="outerHTML"
+        hx-indicator="#spinner-gads">
+
+    <div class="form-row">
+      {% if countries_df is defined and countries_df is not none %}
+      <div class="form-group">
+        <label for="geo_ids">Country</label>
+        <select name="geo_ids" id="geo_ids">
+          {% for _, row in countries_df.sort_values('name').iterrows() %}
+          <option value="{{ row['id'] }}"
+            {% if row['id'] in geo_ids %}selected{% endif %}>
+            {{ row['name'] }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      {% else %}
+      <div class="form-group">
+        <label for="geo_ids">Geo target IDs (comma-separated)</label>
+        <input type="text" name="geo_ids" id="geo_ids"
+               value="{{ geo_ids | join(', ') }}"
+               placeholder="2826 = UK, 2840 = US">
+      </div>
+      {% endif %}
+
+      {% if languages_df is defined and languages_df is not none %}
+      <div class="form-group">
+        <label for="language_id">Language</label>
+        <select name="language_id" id="language_id">
+          {% for _, row in languages_df.iterrows() %}
+          <option value="{{ row['id'] }}"
+            {% if row['id'] == language_id %}selected{% endif %}>
+            {{ row['name'] }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      {% else %}
+      <div class="form-group">
+        <label for="language_id">Language ID</label>
+        <input type="text" name="language_id" id="language_id"
+               value="{{ language_id }}" placeholder="1000 = English">
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-danger"
+              {% if not keyword_count %}disabled{% endif %}>
+        Fetch Google Ads volumes
+      </button>
+      <span id="spinner-gads" class="htmx-indicator spinner">⏳</span>
+      {% if has_results %}
+      <button type="button" class="btn btn-sm"
+              onclick="fetch('{{ url_for('session_reset') }}?gads_only=1')"
+              title="Clear cached Google Ads results">Clear results</button>
+      {% endif %}
+    </div>
+  </form>
+</section>

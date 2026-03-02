@@ -1,0 +1,60 @@
+<section class="section-card" id="section-filters"{% if _oob %} hx-swap-oob="true"{% endif %}>
+  <h3>2. Apply Filters (optional)</h3>
+  <p class="section-caption">Use this section to tidy your data. Should out-of-stock items be excluded? Perhaps second-hand items aren't part of your analysis.</p>
+
+  {% if options %}
+  <form hx-post="{{ url_for('step_filters') }}"
+        hx-target="#section-filters"
+        hx-swap="outerHTML"
+        hx-indicator="#spinner-filters">
+    <div class="filters-stack">
+      {% for col, opts in options.items() %}
+      {% set selected = filters.get(col, []) %}
+      <details class="filter-details" {% if selected %}open{% endif %}>
+        <summary class="filter-summary">
+          <span class="filter-summary-label">{{ col }}</span>
+          {% if selected %}
+          <span class="filter-badge">{{ selected | length }} selected</span>
+          {% else %}
+          <span class="filter-hint">{{ opts | length }} options</span>
+          {% endif %}
+        </summary>
+        <div class="filter-checkbox-list">
+          {% for opt in opts %}
+          <label class="filter-checkbox-row">
+            <input type="checkbox" name="filter_{{ col }}" value="{{ opt }}"
+              {% if opt in selected %}checked{% endif %}>
+            <span>{{ opt }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </details>
+      {% endfor %}
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Apply filters</button>
+      <span id="spinner-filters" class="htmx-indicator spinner">⏳</span>
+      <span class="filter-count-label">
+        Showing {{ '{:,}'.format(filtered_count) }} of {{ '{:,}'.format(total_count) }} rows,
+        {{ keep_col_count }} column(s)
+      </span>
+    </div>
+  </form>
+  {% else %}
+  <p class="section-caption">No filterable columns found (need 2–50 unique values).</p>
+  {% endif %}
+
+  {% if preview_df is not none and preview_df | length > 0 %}
+  <div class="table-scroll preview-table-wrap">
+    <table class="feed-table preview-table">
+      <thead><tr>{% for col in preview_df.columns %}<th>{{ col }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for _, row in preview_df.iterrows() %}
+        <tr>{% for val in row %}<td>{{ val | string | truncate(60) }}</td>{% endfor %}</tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>

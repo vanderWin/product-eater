@@ -1,0 +1,52 @@
+<section class="section-card gads-card" id="section-gads">
+  <h3>Fetching Google Ads volumes…</h3>
+  {% if keyword_count %}<p class="section-caption">Sending {{ '{:,}'.format(keyword_count) }} keywords in batches. Please wait.</p>{% endif %}
+
+  <div id="gads-progress-wrap">
+    <progress id="gads-progress-bar" value="0" max="100" class="gads-progress"></progress>
+    <span id="gads-progress-text" class="progress-text">Starting…</span>
+  </div>
+
+  <div id="gads-results-placeholder"></div>
+
+  <script>
+  (function() {
+    const evtSource = new EventSource("{{ url_for('gads_fetch_progress') }}");
+    const bar = document.getElementById('gads-progress-bar');
+    const text = document.getElementById('gads-progress-text');
+    const placeholder = document.getElementById('gads-results-placeholder');
+
+    function loadResults() {
+      htmx.ajax('GET', '{{ url_for("gads_results") }}', {target: '#gads-results-placeholder', swap: 'innerHTML'});
+      htmx.ajax('GET', '{{ url_for("gads_charts") }}', {target: '#section-charts', swap: 'outerHTML'});
+    }
+
+    evtSource.onmessage = function(event) {
+      const data = JSON.parse(event.data);
+      bar.value = Math.round(data.pct * 100);
+
+      if (data.status === 'running') {
+        text.textContent = 'Batch ' + data.batch + ' of ' + data.total_batches + '…';
+      } else if (data.status === 'done') {
+        bar.value = 100;
+        text.textContent = 'Complete!';
+        evtSource.close();
+        loadResults();
+      } else if (data.status === 'error') {
+        bar.value = 0;
+        text.textContent = 'Error: ' + data.message;
+        text.style.color = '#d9534f';
+        evtSource.close();
+      }
+    };
+
+    evtSource.onerror = function() {
+      evtSource.close();
+      // SSE dropped (e.g. server restart during long fetch).
+      // Try to load results anyway — if the fetch completed the parquet will be there.
+      text.textContent = 'Connection interrupted — loading results…';
+      loadResults();
+    };
+  })();
+  </script>
+</section>

@@ -1,0 +1,39 @@
+{% if not has_results %}
+<p class="info-banner">No Google Ads results yet. Fetch search volumes above.</p>
+{% else %}
+<div class="section-card" id="gads-results-inner">
+  <h3>11. Keywords with Google Ads Metrics</h3>
+  <p class="section-caption">
+    {{ keywords_with_volume | fmt_whole }} keyword-month rows returned with search volume.
+  </p>
+  <p class="section-caption">Showing {{ final_view | length | fmt_whole }} of {{ total_rows | fmt_whole }} rows.</p>
+
+  <div class="table-scroll preview-table-wrap">
+    <table class="feed-table preview-table">
+      <thead>
+        <tr>
+          {% for col in final_view.columns %}
+          <th>{{ col }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for _, row in final_view.iterrows() %}
+        <tr>
+          {% for val in row %}
+          <td>{{ val | string | truncate(60) }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="download-row">
+    <a href="{{ url_for('download_sales_opportunity_csv') }}" class="btn btn-download btn-primary">Download Sales Opportunity Sheet (CSV)</a>
+    <a href="{{ url_for('download_gads_metrics_csv') }}" class="btn btn-download">Download keywords + metrics (CSV)</a>
+    <a href="{{ url_for('download_gads_metrics_xlsx') }}" class="btn btn-download">Download keywords + metrics (Excel)</a>
+    <a href="{{ url_for('download_gads_raw_json') }}" class="btn btn-download">Download raw API JSON</a>
+  </div>
+</div>
+{% endif %}

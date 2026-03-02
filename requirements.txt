@@ -1,7 +1,11 @@
-streamlit>=1.38
+flask>=3.0
+flask-session>=0.8
+gunicorn>=22.0
 pandas>=2.2
 openpyxl>=3.1.2
 xlsxwriter>=3.1.0
 google-ads>=24.0.0
 pyyaml>=6.0.1
-altair>=5.4
+pyarrow>=14.0
+python-dotenv>=1.0
+watchdog>=4.0

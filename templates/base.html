@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Product Feed Eater</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <script src="{{ url_for('static', filename='js/htmx.min.js') }}" defer></script>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="header-inner">
+    <h1 class="app-title">Product Feed Eater</h1>
+    <nav class="header-nav">
+      {% if session.get('file_hash') %}
+      <a href="{{ url_for('session_reset') }}" class="nav-link danger-link"
+         onclick="return confirm('Clear session and start over?')">Clear session</a>
+      {% endif %}
+    </nav>
+  </div>
+</header>
+
+<main class="app-main">
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-container">
+        {% for category, message in messages %}
+          <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  {% block content %}{% endblock %}
+
+</main>
+
+<footer class="app-footer">
+  <img src="{{ url_for('static', filename='logo.svg') }}" alt="Journey Further" class="footer-logo">
+  <span class="footer-copy">&copy; {{ now.year }}
+    <a href="https://www.journeyfurther.com/?utm_source=product-feed-eater&utm_medium=footer&utm_campaign=product-feed-eater"
+       target="_blank">Journey Further</a>
+  </span>
+</footer>
+
+
+<div class="upload-overlay" id="upload-overlay">
+  <div class="upload-overlay-card">
+    <div class="upload-spinner"></div>
+    <p class="upload-overlay-label">Processing your feed&hellip;</p>
+  </div>
+</div>
+
+<script>
+(function () {
+  var form = document.getElementById('upload-form');
+  if (form) {
+    form.addEventListener('submit', function () {
+      document.getElementById('upload-overlay').classList.add('active');
+    });
+  }
+}());
+</script>
+
+<!-- Vega-Lite charting — loaded once at page level so vegaEmbed() is always
+     available when the charts partial is injected via HTMX -->
+<script src="https://cdn.jsdelivr.net/npm/vega@5/build/vega.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-lite@5/build/vega-lite.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-embed@6/build/vega-embed.min.js" defer></script>
+
+<script>
+/* Render any Vega-Lite specs that land in the DOM after an HTMX swap.
+   Specs are stored as inert <script type="application/json" class="vega-spec" data-target="ID">
+   so HTMX never tries to execute them as JavaScript. */
+(function () {
+  function renderVegaCharts() {
+    var specs = document.querySelectorAll('script.vega-spec[data-target]');
+    if (!specs.length) return;
+    if (typeof vegaEmbed === 'undefined') {
+      setTimeout(renderVegaCharts, 100);
+      return;
+    }
+    specs.forEach(function (s) {
+      var el = document.getElementById(s.getAttribute('data-target'));
+      if (!el) return;
+      try { vegaEmbed(el, JSON.parse(s.textContent), {actions: false}); }
+      catch (e) { console.error('vegaEmbed failed:', e); }
+      s.remove();
+    });
+  }
+  document.addEventListener('htmx:afterSwap', renderVegaCharts);
+}());
+</script>
+
+</body>
+</html>

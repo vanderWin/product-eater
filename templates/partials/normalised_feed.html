@@ -1,0 +1,23 @@
+<section class="section-card" id="section-normalised-feed">
+  <h3>7. Download Normalised Product Feed</h3>
+  <p class="section-caption">All the columns you've created so far in one list. Useful for SKU-level product info.</p>
+
+  {% if preview_df is not none %}
+  <p class="section-caption">{{ '{:,}'.format(row_count) }} rows × {{ col_count }} columns</p>
+  <div class="table-scroll preview-table-wrap">
+    <table class="feed-table preview-table">
+      <thead><tr>{% for col in preview_df.columns %}<th>{{ col }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for _, row in preview_df.iterrows() %}
+        <tr>{% for val in row %}<td>{{ val | string | truncate(60) }}</td>{% endfor %}</tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="download-row">
+    <a href="{{ url_for('download_normalised_csv') }}" class="btn btn-download">Download normalised feed (CSV)</a>
+    <a href="{{ url_for('download_normalised_xlsx') }}" class="btn btn-download">Download normalised feed (Excel)</a>
+  </div>
+</section>

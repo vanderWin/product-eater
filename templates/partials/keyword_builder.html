@@ -1,0 +1,141 @@
+<section class="section-card" id="section-keywords">
+  <h3>8. Keyword Combinations</h3>
+  <p class="section-caption">Combine different columns to make keyword lists. Create as many lists as needed.</p>
+
+  <form method="POST" action="{{ url_for('step_keywords') }}" id="keyword-form">
+    <input type="hidden" name="combo_count" value="{{ combos | length }}">
+
+    <div class="action-row">
+      <button type="button"
+              hx-post="{{ url_for('step_keywords_add') }}"
+              hx-include="closest form"
+              hx-target="#section-keywords"
+              hx-swap="outerHTML"
+              class="btn btn-sm">+ Add another list</button>
+      <button type="button"
+              hx-post="{{ url_for('step_keywords_build_presets') }}"
+              hx-target="#section-keywords"
+              hx-swap="outerHTML"
+              hx-confirm="This will replace your current lists with preset lists based on your configured columns. Continue?"
+              class="btn btn-sm">Build preset lists</button>
+    </div>
+
+    {% for i, combo in enumerate(combos) %}
+    <div class="combo-card" id="combo-card-{{ i }}">
+      <div class="combo-header">
+        <strong>Combination {{ i + 1 }}</strong>
+        <div class="action-row">
+          <label class="checkbox-label">
+            <input type="checkbox" name="combo_split_{{ i }}" value="1"
+                   {% if combo.split_ampersand %}checked{% endif %}
+                   hx-post="{{ url_for('step_keywords_combo_preview', idx=i) }}"
+                   hx-include="closest .combo-card"
+                   hx-target="#combo-preview-{{ i }}"
+                   hx-swap="outerHTML"
+                   hx-trigger="change">
+            Split &amp; values for this list
+          </label>
+          <button type="button"
+             hx-post="{{ url_for('step_keywords_remove', idx=i) }}"
+             hx-include="closest form"
+             hx-target="#section-keywords"
+             hx-swap="outerHTML"
+             class="btn btn-sm btn-danger">Remove</button>
+        </div>
+      </div>
+
+      <div class="combo-name-row">
+        <div class="form-group">
+          <label>List name</label>
+          <input type="text" name="combo_name_{{ i }}"
+                 value="{{ combo.name }}" placeholder="Required" required>
+        </div>
+      </div>
+
+      <div class="combo-fields-row">
+        {% for fid, label in [('a', 'Field 1'), ('b', 'Field 2'), ('c', 'Field 3')] %}
+        {% set slot = loop.index0 %}
+        <div class="form-group combo-field">
+          <label>{{ label }}</label>
+          <select name="cmb_{{ i }}_{{ fid }}"
+                  hx-post="{{ url_for('step_keywords_combo_preview', idx=i) }}"
+                  hx-include="closest .combo-card"
+                  hx-target="#combo-preview-{{ i }}"
+                  hx-swap="outerHTML"
+                  hx-trigger="change delay:200ms">
+            <option value="">(none)</option>
+            {% for col in all_cols %}
+            <option value="{{ col }}"
+              {% if slot < (combo.fields | length) and combo.fields[slot] == col %}selected{% endif %}>
+              {{ col }}{% if example_vals.get(col) %} - {{ example_vals[col] }}{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div id="combo-preview-{{ i }}">
+        {% set preview = combo_previews[i] %}
+        {% if preview %}
+        <p class="section-caption combo-preview-line">Preview output: <strong class="combo-preview-value">{{ preview | truncate(100) }}</strong></p>
+        {% else %}
+        <p class="section-caption combo-preview-line">Select one or more fields to preview the generated keywords.</p>
+        {% endif %}
+
+        {% set kc = per_list_tables[i] %}
+        {% set display_cols = per_list_display_cols[i] %}
+        {% if kc is not none and kc | length > 0 %}
+        <div class="table-scroll preview-table-wrap keyword-table-wrap">
+          <table class="feed-table preview-table">
+            <thead><tr>{% for col in display_cols %}<th>{{ col }}</th>{% endfor %}</tr></thead>
+            <tbody>
+              {% set whole_cols = ['Product Count', 'Unique Product Groups', 'Clicks (28d)', 'Total Quantity', 'Total Sales Value'] %}
+              {% for _, row in kc.head(preview_rows).iterrows() %}
+              <tr>
+                {% for col in display_cols %}
+                <td>
+                  {% if col in whole_cols %}{{ row[col] | fmt_whole }}{% else %}{{ row[col] | string | truncate(50) }}{% endif %}
+                </td>
+                {% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+
+    <div class="form-actions">
+      <button id="btn-finalise-keywords" type="button"
+              hx-post="{{ url_for('step_keywords_finalise') }}"
+              hx-include="closest form"
+              hx-target="#section-keywords"
+              hx-swap="outerHTML"
+              hx-indicator="#spinner-keywords"
+              class="btn btn-primary">Finalise keyword lists</button>
+      <span id="spinner-keywords" class="htmx-indicator spinner">...</span>
+    </div>
+  </form>
+
+  <script>
+  (function () {
+    var btn = document.getElementById('btn-finalise-keywords');
+    if (!btn) return;
+    btn.addEventListener('htmx:beforeRequest', function (evt) {
+      var empty = Array.from(document.querySelectorAll('[name^="combo_name_"]'))
+        .filter(function (i) { return !i.value.trim(); });
+      if (empty.length) {
+        evt.preventDefault();
+        empty[0].focus();
+        empty[0].style.outline = '2px solid red';
+      }
+    });
+    document.querySelectorAll('[name^="combo_name_"]').forEach(function (i) {
+      i.addEventListener('input', function () { i.style.outline = ''; });
+    });
+  }());
+  </script>
+</section>

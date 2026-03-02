@@ -210,8 +210,28 @@ __marimo__/
 # Streamlit local secrets
 .streamlit/secrets.toml
 
-# Google Ads & OAuth
+# Google Ads & OAuth credentials — never commit these
 google-ads.yaml
 client_secret_*.json
 *.service_account.json
 *.oauth.json
+*service*key*.json
+*key*.json
+
+# Claude Code local settings
+.claude/
+
+# Flask session store — keep the placeholder, ignore session data
+session_store/*
+!session_store/.gitkeep
+
+# Generated output / scratch files
+keywords_with_gads_metrics.csv
+sales_opportunity_sheet.csv
+example_gads_historical_metrics_raw.json
+
+# Log files (txt variant not caught by *.log)
+logs-*.txt
+
+# Test feed uploads
+Test Feeds/

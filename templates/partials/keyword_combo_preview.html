@@ -1,0 +1,27 @@
+<div id="combo-preview-{{ idx }}">
+  {% if preview %}
+  <p class="section-caption combo-preview-line">Preview output: <strong class="combo-preview-value">{{ preview | truncate(100) }}</strong></p>
+  {% else %}
+  <p class="section-caption combo-preview-line">Select one or more fields to preview the generated keywords.</p>
+  {% endif %}
+
+  {% if kc is not none and kc | length > 0 %}
+  <div class="table-scroll preview-table-wrap keyword-table-wrap">
+    <table class="feed-table preview-table">
+      <thead><tr>{% for col in display_cols %}<th>{{ col }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% set whole_cols = ['Product Count', 'Unique Product Groups', 'Clicks (28d)', 'Total Quantity', 'Total Sales Value'] %}
+        {% for _, row in kc.head(preview_rows).iterrows() %}
+        <tr>
+          {% for col in display_cols %}
+          <td>
+            {% if col in whole_cols %}{{ row[col] | fmt_whole }}{% else %}{{ row[col] | string | truncate(50) }}{% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>

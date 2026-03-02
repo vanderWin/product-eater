@@ -1,0 +1,46 @@
+<section class="section-card" id="section-colour-summary">
+  <h3>4. Colour Summary</h3>
+  <p class="section-caption">The percentage of products grouped by colour.</p>
+
+  {% if not colour_candidates %}
+  <p class="info-banner">No colour column found. Add one of: generic_colour, product_colour, color, colour.</p>
+  {% else %}
+  <form hx-post="{{ url_for('step_colour_summary') }}"
+        hx-target="#section-colour-summary"
+        hx-swap="outerHTML"
+        hx-indicator="#spinner-colour-summary">
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="colour_col_summary">Colour column</label>
+        <select name="colour_col" id="colour_col_summary" hx-trigger="change"
+                hx-post="{{ url_for('step_colour_summary') }}"
+                hx-target="#section-colour-summary" hx-swap="outerHTML">
+          {% for col in colour_candidates %}
+          <option value="{{ col }}" {% if col == colour_col %}selected{% endif %}>{{ col }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <span id="spinner-colour-summary" class="htmx-indicator spinner">⏳</span>
+    </div>
+  </form>
+
+  {% if vc is not none %}
+  <div class="table-scroll scrollable">
+    <table class="feed-table">
+      <thead><tr><th>Colour</th><th>Product Count</th><th>% of Products</th></tr></thead>
+      <tbody>
+        {% for _, row in vc.iterrows() %}
+        <tr>
+          <td>{{ row['Colour'] }}</td>
+          <td class="cell-number">{{ '{:,}'.format(row['Product Count']) }}</td>
+          <td class="cell-number">{{ row['% of Products'] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="section-caption">Non-empty colours: {{ '{:,}'.format(non_empty) }} rows.</p>
+  {% endif %}
+  {% endif %}
+</section>

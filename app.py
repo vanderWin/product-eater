@@ -169,10 +169,11 @@ with st.expander("Instructions", expanded=False):
 - Screen out anything irrelevant to your analysis. For example, filter to English (language column), or use a feed label like "GB" to separate markets.
 - You might also filter on availability and condition to focus on in-stock items that are not second-hand.
 
-**Section 3: Grouping by image**
+**Section 3: Product grouping**
 - We need a way to estimate how many products a keyword combination represents. Feeds list every SKU/MPN, but most people think in product groups.
-- We use the image URL to group SKUs, since a product image is typically shared across sizes. This can reduce 50K SKUs to 5K product groups.
-- By default the app picks the image URL that yields the most product groups. Sense check the chosen column (image link or additional image link).
+- We prefer `item group id` for grouping when available. If that is missing, we fall back to image URL grouping.
+- Image grouping uses the first image URL and can reduce 50K SKUs to 5K product groups.
+- Sense check the grouping column before continuing, then review the feed label sales/value table.
 
 **Section 4: Colour summary**
 - Sense check which column is used for colour counts, plus the product count and percentage for each colour.
@@ -194,14 +195,15 @@ with st.expander("Instructions", expanded=False):
 - If you want keyword combinations, continue to the next section.
 
 **Section 9: Keyword combinations**
-- Combine fields to create keyword lists, then validate them with product counts and product groups.
+- Combine fields to create keyword lists, then validate them with product counts, product groups, quantities, and sales value.
 - You can create multiple lists and name each one. Example: `main_category` gives top-level terms like "polo shirts."
 - You can add another list with `age_gender_segment` + `main_category` to get phrases like "mens polo shirts."
 - For deeper granularity, use `age_gender_segment` + `main_category` + `generic_colour` for phrases like "mens blue polo shirts."
 - Order matters. "Blue mens polo shirts" implies something else than "mens blue polo shirts."
+- Optional toggle: split `&` conjunctions (for example `shirts & tops`) into separate keyword rows.
 
 **Section 10: Combined keyword list**
-- Sense check the phrases, product counts, and product groups.
+- Sense check the phrases, product counts, product groups, quantities, and sales value.
 - Export the list if needed.
 
 **Section 11: Google Ads Search Volumes**
@@ -210,6 +212,7 @@ with st.expander("Instructions", expanded=False):
 
 **Section 12: Keywords with Google Ads metrics**
 - Results are returned as one row per keyword per month for seasonality analysis.
+- An opportunity model is also included, using your historic clicks and Google Ads search volume to estimate upside.
 - Google Ads only returns the last 12 months via API.
 - Two charts are shown: total search volume by list over the last 12 months, and normalised seasonality by month.
 - You can download chart data or pivot the Keywords and Metrics export to the same effect.
@@ -308,6 +311,7 @@ recommended_raw = [
     "title", "availability", "price", "brand", "gtin", "mpn",
     "condition", "language", "age group", "product type", "gender", "color",
     "image link", "additional image link",
+    "feed label", "item group id", "quantity", "qauntity",
     "google product category", "age_gender_segment",
 ]
 
@@ -540,30 +544,35 @@ with st.container(border=True):
     st.write(f"Keeping {len(filtered)} rows and {len(keep_cols)} column(s).")
     st.dataframe(filtered.head(preview_rows), width="stretch", height=400)
 
-# ---- Product groups by image ----
+# ---- Product groups ----
 with st.container(border=True):
-    st.subheader("3. Product groups by image")
+    st.subheader("3. Product groups")
 
-    # Choose source column (prefer additional image link)
+    # Choose grouping column (prefer item group id, then image fields)
     _f_norm_to_orig = {norm(c): c for c in filtered.columns}
+    group_id_col = _f_norm_to_orig.get(norm("item group id"))
+
     img_wanted = [
         "image link", "additional image link",
         "image_link", "additional_image_link",
     ]
     img_wanted_norm = [norm(w) for w in img_wanted]
-    # Deduplicate while preserving order
-    _cands = []
+
+    # Deduplicate while preserving order (item group id first)
+    _cands = [group_id_col] if group_id_col else []
     for w in img_wanted_norm:
         if w in _f_norm_to_orig:
             col = _f_norm_to_orig[w]
             if col not in _cands:
                 _cands.append(col)
-    img_candidates = _cands
+    group_candidates = _cands
 
-    if not img_candidates:
-        st.info("No image fields detected. Add one of: additional image link, image link.")
+    if not group_candidates:
+        st.info("No grouping fields detected. Add `item group id` or an image field (`additional image link` / `image link`).")
     else:
-        # Extract first URL if multiple are present
+        invalid_tokens = {"", "nan", "none", "null", "<na>"}
+
+        # Extract first URL if multiple are present in image fields
         _url_re = re.compile(r"https?://[^\s,]+", flags=re.I)
         def _first_url(v: str) -> str:
             if not isinstance(v, str):
@@ -572,9 +581,14 @@ with st.container(border=True):
             return m[0].strip() if m else ""
 
         stats_by_col = {}
-        for col in img_candidates:
-            keys = filtered[col].astype(str).map(_first_url).str.strip()
-            has_key = keys.ne("")
+        for col in group_candidates:
+            raw = filtered[col].astype(str).str.strip()
+            if group_id_col and col == group_id_col:
+                keys = raw
+                has_key = ~raw.str.lower().isin(invalid_tokens)
+            else:
+                keys = raw.map(_first_url).str.strip()
+                has_key = keys.ne("")
             stats_by_col[col] = {
                 "keys": keys,
                 "has_key": has_key,
@@ -582,35 +596,165 @@ with st.container(border=True):
                 "sku_count": int(has_key.sum()),
             }
 
-        if len(img_candidates) > 1:
-            st.caption("Compare image columns before selecting a grouping column.")
-            metric_cols = st.columns(len(img_candidates))
-            for slot, col in zip(metric_cols, img_candidates):
-                slot.markdown(f"**{col}**")
-                slot.metric("Product groups", f"{stats_by_col[col]['group_count']:,}")
-                slot.metric("SKUs (rows with image)", f"{stats_by_col[col]['sku_count']:,}")
+        if group_id_col:
+            default_col = group_id_col
         else:
-            col = img_candidates[0]
-            st.metric("Product groups", f"{stats_by_col[col]['group_count']:,}")
-            st.metric("SKUs (rows with image)", f"{stats_by_col[col]['sku_count']:,}")
-
-        default_col = max(img_candidates, key=lambda c: stats_by_col[c]["group_count"])
-        default_idx = img_candidates.index(default_col)
-        img_col = st.selectbox(
-            "Group by image column",
-            options=img_candidates,
+            default_col = max(group_candidates, key=lambda c: stats_by_col[c]["group_count"])
+        default_idx = group_candidates.index(default_col)
+        group_col = st.selectbox(
+            "Group by column",
+            options=group_candidates,
             index=default_idx,
-            help="Groups products sharing the same first image URL (ignoring blanks).",
+            help="Uses item group id when available; otherwise groups products by first image URL.",
         )
 
-        keys = stats_by_col[img_col]["keys"]
-        has_key = stats_by_col[img_col]["has_key"]
-        # Assign stable 1-based group ids for rows with a URL
+        keys = stats_by_col[group_col]["keys"]
+        has_key = stats_by_col[group_col]["has_key"]
+        # Assign stable 1-based group ids for rows with a grouping key
         codes = pd.Series(pd.NA, index=filtered.index, dtype="Int64")
         if has_key.any():
             fact = pd.factorize(keys[has_key])[0] + 1
             codes.loc[has_key] = pd.array(fact, dtype="Int64")
         filtered["image_group_id"] = codes
+
+        # ---- Feed label sales potential summary ----
+        feed_label_col = _f_norm_to_orig.get(norm("feed label"))
+        price_col = _f_norm_to_orig.get(norm("price"))
+        quantity_col = _f_norm_to_orig.get(norm("quantity")) or _f_norm_to_orig.get(norm("qauntity"))
+
+        num_re = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
+        ccy_re = re.compile(r"\b([A-Z]{3})\b")
+
+        def _to_number(v: str) -> float:
+            s = str(v).strip()
+            if not s or s.lower() in invalid_tokens:
+                return math.nan
+            m = num_re.search(s)
+            if not m:
+                return math.nan
+            try:
+                return float(m.group(0).replace(",", ""))
+            except Exception:
+                return math.nan
+
+        def _to_ccy(v: str) -> str:
+            s = str(v).strip().upper()
+            if not s or s.lower() in invalid_tokens:
+                return ""
+            m = ccy_re.search(s)
+            return m.group(1) if m else ""
+
+        def _currency_symbol(ccy: str) -> str:
+            c = str(ccy).upper()
+            return {
+                "GBP": "£",
+                "EUR": "€",
+                "USD": "$",
+                "CAD": "C$",
+                "AUD": "A$",
+                "NZD": "NZ$",
+                "JPY": "¥",
+                "CNY": "¥",
+                "HKD": "HK$",
+                "SGD": "S$",
+                "CHF": "CHF ",
+                "SEK": "kr ",
+                "NOK": "kr ",
+                "DKK": "kr ",
+                "PLN": "zł ",
+                "CZK": "Kč ",
+                "HUF": "Ft ",
+                "RON": "lei ",
+                "TRY": "₺",
+                "AED": "AED ",
+                "SAR": "SAR ",
+                "QAR": "QAR ",
+                "INR": "₹",
+                "ZAR": "R ",
+                "BRL": "R$",
+                "MXN": "MX$",
+                "KRW": "₩",
+            }.get(c, "")
+
+        def _fmt_int(v: float) -> str:
+            if pd.isna(v):
+                return "0"
+            return f"{int(round(float(v))):,}"
+
+        def _fmt_qty(v: float) -> str:
+            if pd.isna(v):
+                return "0"
+            n = float(v)
+            if abs(n - round(n)) < 1e-9:
+                return f"{int(round(n)):,}"
+            return f"{n:,.2f}"
+
+        def _fmt_sales(v: float, ccy: str) -> str:
+            n = 0.0 if pd.isna(v) else float(v)
+            whole = int(round(n))
+            sym = _currency_symbol(ccy)
+            if sym:
+                return f"{sym}{whole:,}"
+            if ccy and ccy != "(unknown)":
+                return f"{ccy} {whole:,}"
+            return f"{whole:,}"
+
+        roll = filtered.copy()
+        if feed_label_col:
+            roll["_feed_label"] = roll[feed_label_col].astype(str).str.strip().replace("", "(blank)")
+        else:
+            roll["_feed_label"] = "(all)"
+
+        if quantity_col:
+            roll["_quantity"] = roll[quantity_col].map(_to_number).fillna(0.0)
+        else:
+            roll["_quantity"] = 0.0
+
+        if price_col:
+            roll["_price_amount"] = roll[price_col].map(_to_number)
+            roll["_currency"] = roll[price_col].map(_to_ccy).replace("", "(unknown)")
+            roll["_sales_value"] = (roll["_price_amount"].fillna(0.0) * roll["_quantity"])
+
+            feed_value = (
+                roll.groupby(["_feed_label", "_currency"], as_index=False)
+                    .agg(**{
+                        "SKU Rows": ("_feed_label", "size"),
+                        "Product Groups": ("image_group_id", lambda x: x.dropna().nunique()),
+                        "Total Quantity": ("_quantity", "sum"),
+                        "Total Sales Value": ("_sales_value", "sum"),
+                    })
+                    .sort_values(["_feed_label", "_currency"], ascending=[True, True])
+                    .rename(columns={"_feed_label": "Feed Label", "_currency": "Currency"})
+                    .reset_index(drop=True)
+            )
+        else:
+            feed_value = (
+                roll.groupby("_feed_label", as_index=False)
+                    .agg(**{
+                        "SKU Rows": ("_feed_label", "size"),
+                        "Product Groups": ("image_group_id", lambda x: x.dropna().nunique()),
+                        "Total Quantity": ("_quantity", "sum"),
+                    })
+                    .sort_values("_feed_label")
+                    .rename(columns={"_feed_label": "Feed Label"})
+                    .reset_index(drop=True)
+            )
+
+        feed_value_display = feed_value.copy()
+        if "SKU Rows" in feed_value_display.columns:
+            feed_value_display["SKU Rows"] = feed_value_display["SKU Rows"].map(_fmt_int)
+        if "Product Groups" in feed_value_display.columns:
+            feed_value_display["Product Groups"] = feed_value_display["Product Groups"].map(_fmt_int)
+        if "Total Quantity" in feed_value_display.columns:
+            feed_value_display["Total Quantity"] = feed_value_display["Total Quantity"].map(_fmt_qty)
+        if "Total Sales Value" in feed_value_display.columns:
+            ccy_vals = feed_value_display.get("Currency", pd.Series([""] * len(feed_value_display), index=feed_value_display.index))
+            feed_value_display["Total Sales Value"] = [
+                _fmt_sales(v, c) for v, c in zip(feed_value_display["Total Sales Value"], ccy_vals)
+            ]
+
+        st.caption("Feed label rollup uses parsed numeric `price` and `quantity` to estimate total sales value.")
+        st.dataframe(feed_value_display, width="stretch")
 
 # ---- Colour summary ----
 with st.container(border=True):
@@ -910,13 +1054,25 @@ with st.container(border=True):
     with cols_bar[1]:
         if st.button("Clear all combinations"):
             st.session_state.combos = [{"fields": [], "name": ""}]
+    with cols_bar[2]:
+        explode_ampersand = st.checkbox(
+            "Split '&' values",
+            value=False,
+            help="Explodes values like 'shirts & tops' into separate keyword rows.",
+            key="kw_split_ampersand",
+        )
 
     to_remove = []
     per_list_tables = []
 
-    def make_keywords(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    def make_keywords(df: pd.DataFrame, cols: list[str], explode_ampersand: bool = False) -> pd.DataFrame:
+        out_cols = [
+            "keyword", "Product Count", "Unique Product Groups",
+            "Clicks (28d)", "Clicks Monthly Est",
+            "Total Quantity", "Sales Currency", "Total Sales Value",
+        ]
         if not cols:
-            return pd.DataFrame(columns=["keyword", "Product Count", "Unique Product Groups"])
+            return pd.DataFrame(columns=out_cols)
 
         sub = df[cols].copy()
 
@@ -932,31 +1088,136 @@ with st.container(border=True):
         valid_mask = (~sub.isin(INVALIDS)).all(axis=1)
 
         if not valid_mask.any():
-            return pd.DataFrame(columns=["keyword", "Product Count", "Unique Product Groups"])
+            return pd.DataFrame(columns=out_cols)
 
-        s = sub.loc[valid_mask].apply(lambda row: " ".join(row.values), axis=1)
-        s = s.str.replace(r"\s+", " ", regex=True).str.strip()  # tidy spacing
+        valid_sub = sub.loc[valid_mask]
+        if explode_ampersand:
+            def _parts_for_value(v: str) -> list[str]:
+                txt = str(v).strip()
+                if "&" not in txt:
+                    return [txt]
+                parts = [p.strip() for p in re.split(r"\s*&\s*", txt) if p.strip()]
+                return parts if parts else [txt]
 
-        tmp = pd.DataFrame({"keyword": s})
+            expanded_keywords: list[str] = []
+            expanded_src_idx: list[int] = []
+            for src_idx, row in valid_sub.iterrows():
+                token_lists = [_parts_for_value(v) for v in row.values]
+                for combo_vals in itertools.product(*token_lists):
+                    kw = re.sub(r"\s+", " ", " ".join(combo_vals)).strip()
+                    if kw and kw not in INVALIDS:
+                        expanded_keywords.append(kw)
+                        expanded_src_idx.append(src_idx)
+
+            if not expanded_keywords:
+                return pd.DataFrame(columns=out_cols)
+
+            tmp = pd.DataFrame({"keyword": expanded_keywords})
+            row_ix = pd.Index(expanded_src_idx)
+        else:
+            s = valid_sub.apply(lambda row: " ".join(row.values), axis=1)
+            s = s.str.replace(r"\s+", " ", regex=True).str.strip()  # tidy spacing
+            tmp = pd.DataFrame({"keyword": s})
+            row_ix = tmp.index
+
+        # Optional value fields from the feed for sales potential rollups
+        _df_norm_to_orig = {norm(c): c for c in df.columns}
+        price_col = _df_norm_to_orig.get(norm("price"))
+        quantity_col = _df_norm_to_orig.get(norm("quantity")) or _df_norm_to_orig.get(norm("qauntity"))
+        clicks_col = (
+            _df_norm_to_orig.get(norm("all clicks"))
+            or _df_norm_to_orig.get(norm("all_clicks"))
+            or _df_norm_to_orig.get(norm("28 day clicks"))
+            or _df_norm_to_orig.get(norm("clicks"))
+        )
+
+        num_re = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
+        ccy_re = re.compile(r"\b([A-Z]{3})\b")
+
+        def _to_number(v: str) -> float:
+            x = str(v).strip()
+            if not x or x.lower() in INVALIDS:
+                return math.nan
+            m = num_re.search(x)
+            if not m:
+                return math.nan
+            try:
+                return float(m.group(0).replace(",", ""))
+            except Exception:
+                return math.nan
+
+        def _to_ccy(v: str) -> str:
+            x = str(v).strip().upper()
+            if not x or x.lower() in INVALIDS:
+                return ""
+            m = ccy_re.search(x)
+            return m.group(1) if m else ""
+
+        if quantity_col:
+            tmp["_quantity"] = df.loc[row_ix, quantity_col].map(_to_number).fillna(0.0).to_numpy()
+        else:
+            tmp["_quantity"] = 0.0
+
+        if clicks_col:
+            tmp["_clicks_28d"] = df.loc[row_ix, clicks_col].map(_to_number).fillna(0.0).to_numpy()
+        else:
+            tmp["_clicks_28d"] = 0.0
+
+        if price_col:
+            tmp["_price_amount"] = df.loc[row_ix, price_col].map(_to_number).to_numpy()
+            tmp["_currency"] = df.loc[row_ix, price_col].map(_to_ccy).to_numpy()
+            tmp["_sales_value"] = tmp["_quantity"] * tmp["_price_amount"].fillna(0.0)
+        else:
+            tmp["_currency"] = ""
+            tmp["_sales_value"] = math.nan
+
         if "image_group_id" in df.columns:
-            tmp["image_group_id"] = df.loc[tmp.index, "image_group_id"]
+            tmp["image_group_id"] = df.loc[row_ix, "image_group_id"].to_numpy()
             out = (tmp.groupby("keyword", as_index=False)
                        .agg(**{
                             "Product Count": ("keyword", "size"),
                             "Unique Product Groups": ("image_group_id", lambda x: x.dropna().nunique()),
+                            "Clicks (28d)": ("_clicks_28d", "sum"),
+                            "Total Quantity": ("_quantity", "sum"),
+                            "_sales_value": ("_sales_value", "sum"),
                        }))
         else:
             out = (tmp.groupby("keyword", as_index=False)
                        .agg(**{
                             "Product Count": ("keyword", "size"),
+                            "Clicks (28d)": ("_clicks_28d", "sum"),
+                            "Total Quantity": ("_quantity", "sum"),
+                            "_sales_value": ("_sales_value", "sum"),
                        }))
             out["Unique Product Groups"] = out["Product Count"]
 
+        if price_col:
+            ccy_sets = (
+                tmp.assign(_currency=tmp["_currency"].replace("", pd.NA))
+                   .groupby("keyword")["_currency"]
+                   .agg(lambda x: sorted(set(x.dropna().tolist())))
+            )
+            out = out.merge(ccy_sets.rename("_currency_set"), left_on="keyword", right_index=True, how="left")
+            out["Sales Currency"] = out["_currency_set"].apply(
+                lambda xs: xs[0] if isinstance(xs, list) and len(xs) == 1
+                else ("MIXED" if isinstance(xs, list) and len(xs) > 1 else "(unknown)")
+            )
+            # Avoid inaccurate totals when mixed currencies exist inside the same keyword.
+            out["Total Sales Value"] = out["_sales_value"].where(out["Sales Currency"].ne("MIXED"), math.nan)
+            out["Total Sales Value"] = pd.to_numeric(out["Total Sales Value"], errors="coerce").round().astype("Int64")
+            out = out.drop(columns=["_currency_set"])
+        else:
+            out["Sales Currency"] = "(n/a)"
+            out["Total Sales Value"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+
+        out["Clicks Monthly Est"] = (pd.to_numeric(out["Clicks (28d)"], errors="coerce").fillna(0.0) * (30.0 / 28.0)).round(2)
+        out["Total Quantity"] = pd.to_numeric(out["Total Quantity"], errors="coerce").fillna(0.0)
+
         out = out.sort_values(
-            ["Product Count", "Unique Product Groups", "keyword"],
-            ascending=[False, False, True],
+            ["Product Count", "Unique Product Groups", "Total Quantity", "keyword"],
+            ascending=[False, False, False, True],
         ).reset_index(drop=True)
-        return out
+        return out[[c for c in out_cols if c in out.columns]]
 
 
     for i, combo in enumerate(st.session_state.combos):
@@ -993,12 +1254,16 @@ with st.container(border=True):
                 to_remove.append(i)
 
         # per-combo table
-        kc = make_keywords(source_df, chosen)
+        kc = make_keywords(source_df, chosen, explode_ampersand=explode_ampersand)
         if final_name:
             kc.insert(0, "list_name", final_name)
         else:
             kc.insert(0, "list_name", f"List {i+1}")
         c.dataframe(kc.head(preview_rows), width="stretch", height=220)
+        if "Sales Currency" in kc.columns:
+            mixed_n = int(kc["Sales Currency"].eq("MIXED").sum())
+            if mixed_n:
+                c.caption(f"{mixed_n:,} keyword(s) span multiple currencies; `Total Sales Value` is left blank for those rows.")
         # Excel prepared on click
         if c.button(f"Prepare list {i+1} (Excel)", key=f"prep_list_{i+1}_xlsx"):
             st.session_state[f"_list_{i+1}_xlsx_bytes"] = to_xlsx_bytes(kc, sheet_name=f"List {i+1}")
@@ -1026,7 +1291,11 @@ with st.container(border=True):
     # Combined table: keep list_name so analysts can filter
     combined_df = (
         pd.concat(per_list_tables, ignore_index=True) if per_list_tables else
-        pd.DataFrame(columns=["list_name","keyword","Product Count","Unique Product Groups"])
+        pd.DataFrame(columns=[
+            "list_name", "keyword", "Product Count", "Unique Product Groups",
+            "Clicks (28d)", "Clicks Monthly Est",
+            "Total Quantity", "Sales Currency", "Total Sales Value",
+        ])
     )
 
 
@@ -1370,8 +1639,90 @@ with st.container(border=True):
         final_view["exact_match"] = final_view["keyword"].str.lower().str.strip().eq(final_view.get("canonical_keyword",""))
         final_view["matched_to"] = final_view.get("canonical_keyword","")
 
+        baseline_capture_rate = 0.05
+        baseline_source = "fallback"
+        baseline_n = 0
+        if {"avg_monthly_searches", "Clicks Monthly Est"}.issubset(final_view.columns):
+            k = final_view[[
+                c for c in [
+                    "list_name", "keyword", "Product Count", "Sales Currency",
+                    "Total Sales Value", "avg_monthly_searches", "Clicks Monthly Est"
+                ] if c in final_view.columns
+            ]].drop_duplicates(subset=["list_name", "keyword"]).copy()
+
+            k["avg_monthly_searches"] = pd.to_numeric(k.get("avg_monthly_searches"), errors="coerce")
+            k["Clicks Monthly Est"] = pd.to_numeric(k.get("Clicks Monthly Est"), errors="coerce").fillna(0.0)
+            k["Product Count"] = pd.to_numeric(k.get("Product Count"), errors="coerce").fillna(0.0)
+            k["Total Sales Value"] = pd.to_numeric(k.get("Total Sales Value"), errors="coerce")
+
+            k["Capture Rate"] = k["Clicks Monthly Est"] / k["avg_monthly_searches"].replace(0, pd.NA)
+            k["Capture Rate"] = pd.to_numeric(k["Capture Rate"], errors="coerce").replace([math.inf, -math.inf], math.nan)
+
+            stable_mask = (
+                k["avg_monthly_searches"].ge(100)
+                & k["Clicks Monthly Est"].gt(0)
+                & k["Capture Rate"].notna()
+            )
+            stable_rates = k.loc[stable_mask, "Capture Rate"]
+            positive_rates = k.loc[k["Capture Rate"].gt(0) & k["Capture Rate"].notna(), "Capture Rate"]
+
+            if not stable_rates.empty:
+                baseline_capture_rate = float(stable_rates.median())
+                baseline_source = "stable keywords"
+                baseline_n = int(stable_rates.shape[0])
+            elif not positive_rates.empty:
+                baseline_capture_rate = float(positive_rates.median())
+                baseline_source = "all positive keywords"
+                baseline_n = int(positive_rates.shape[0])
+
+            if not math.isfinite(baseline_capture_rate):
+                baseline_capture_rate = 0.05
+                baseline_source = "fallback"
+                baseline_n = 0
+            baseline_capture_rate = min(max(baseline_capture_rate, 0.0), 1.0)
+
+            k["Baseline Capture Rate"] = baseline_capture_rate
+            k["Expected Clicks"] = k["avg_monthly_searches"].fillna(0.0) * baseline_capture_rate
+            k["Potential Click Upside"] = (k["Expected Clicks"] - k["Clicks Monthly Est"]).clip(lower=0.0)
+            k["Value per Click"] = k["Total Sales Value"] / k["Clicks Monthly Est"].replace(0, pd.NA)
+
+            if "Sales Currency" in k.columns:
+                invalid_currency = {"MIXED", "(n/a)", "(unknown)", ""}
+                bad_ccy = k["Sales Currency"].astype(str).str.strip().isin(invalid_currency)
+                k.loc[bad_ccy, "Value per Click"] = math.nan
+
+            k["Opportunity Value"] = k["Potential Click Upside"] * k["Value per Click"]
+
+            raw_rank = k["Opportunity Value"].where(k["Opportunity Value"].gt(0)).rank(method="average", pct=True)
+            search_conf = (
+                k["avg_monthly_searches"].fillna(0.0).clip(lower=0.0)
+                .map(lambda x: math.log1p(float(x)) / math.log1p(1000.0))
+                .clip(lower=0.0, upper=1.0)
+            )
+            prod_conf = (
+                k["Product Count"].fillna(0.0).clip(lower=0.0)
+                .map(lambda x: math.log1p(float(x)) / math.log1p(50.0))
+                .clip(lower=0.0, upper=1.0)
+            )
+            conf = (0.7 * search_conf + 0.3 * prod_conf).clip(lower=0.0, upper=1.0)
+            k["Opportunity Score"] = ((raw_rank.fillna(0.0) * conf) * 100.0).round().astype("Int64")
+
+            opp_cols = [
+                "Capture Rate", "Baseline Capture Rate", "Expected Clicks",
+                "Potential Click Upside", "Value per Click", "Opportunity Value", "Opportunity Score",
+            ]
+            final_view = final_view.merge(
+                k[["list_name", "keyword"] + opp_cols],
+                on=["list_name", "keyword"],
+                how="left",
+            )
+
         ordered = [
             "list_name","keyword","Product Count","Unique Product Groups",
+            "Clicks (28d)","Clicks Monthly Est",
+            "Total Quantity","Sales Currency","Total Sales Value",
+            "Capture Rate","Baseline Capture Rate","Expected Clicks","Potential Click Upside",
+            "Value per Click","Opportunity Value","Opportunity Score",
             "avg_monthly_searches","competition_level","competition_index",
             "low_top_of_page_bid_micros","high_top_of_page_bid_micros",
             "year","month","monthly_searches",
@@ -1381,6 +1732,10 @@ with st.container(border=True):
                                 [c for c in final_view.columns if c not in ordered]]
 
         st.subheader("12. Keywords with Google Ads metrics")
+        st.caption(
+            f"Opportunity score uses a baseline capture rate of {baseline_capture_rate:.2%} "
+            f"({baseline_source}; n={baseline_n:,}) to estimate click and value upside."
+        )
         st.dataframe(final_view.head(preview_rows), width="stretch", height=360)
         # Excel prepared on click
         if st.button("Prepare keywords + metrics (Excel)", key="prep_keywords_gads_unified_xlsx"):

@@ -1,0 +1,42 @@
+<section class="section-card" id="section-groups"{% if _oob %} hx-swap-oob="true"{% endif %}>
+  <h3>3. Product Groups</h3>
+
+  {% if not candidates %}
+  <p class="info-banner">No grouping fields detected. Add <code>item group id</code> or an image field.</p>
+  {% else %}
+  <form hx-post="{{ url_for('step_groups') }}"
+        hx-target="#section-groups"
+        hx-swap="outerHTML"
+        hx-indicator="#spinner-groups">
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="group_col">Products will be grouped by the following:</label>
+        <select name="group_col" id="group_col" hx-trigger="change" hx-post="{{ url_for('step_groups') }}"
+                hx-target="#section-groups" hx-swap="outerHTML">
+          {% for col in candidates %}
+          <option value="{{ col }}" {% if col == group_col %}selected{% endif %}>
+            {{ col }} — {{ '{:,}'.format(stats[col].group_count) }} groups from {{ '{:,}'.format(stats[col].sku_count) }} SKUs
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <span id="spinner-groups" class="htmx-indicator spinner">⏳</span>
+    </div>
+  </form>
+
+  {% if rollup is not none and rollup | length > 0 %}
+  <p class="section-caption">Feed label aggregation uses parsed numeric <code>price</code> and <code>quantity</code> fields from your feed to estimate total sales value.</p>
+  <div class="table-scroll">
+    <table class="feed-table">
+      <thead><tr>{% for col in rollup.columns %}<th>{{ col }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for _, row in rollup.iterrows() %}
+        <tr>{% for val in row %}<td>{{ val }}</td>{% endfor %}</tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endif %}
+</section>

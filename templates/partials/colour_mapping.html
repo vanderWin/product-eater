@@ -1,0 +1,228 @@
+<section class="section-card" id="section-colour-mapping">
+  <h3>5. Colour Mapping</h3>
+  <p class="section-caption">Group brand-specific colour names into generic colours. e.g. "midnight panther" -> "black".</p>
+
+  {% if not has_colour %}
+  <p class="info-banner">No colour column found. Skipping mapping.</p>
+
+  {% elif map_error %}
+  <p class="error-banner">Could not load colour_mapping.csv.</p>
+
+  {% else %}
+
+  {% if unmapped is none or unmapped.empty %}
+  <p class="success-banner">All colours are mapped.</p>
+  {% else %}
+
+  <form hx-post="{{ url_for('step_colour_mapping') }}"
+        hx-target="#section-colour-mapping"
+        hx-swap="outerHTML"
+        hx-indicator="#spinner-colour-map">
+
+    <p class="section-caption">Map high-volume unmapped colours using the dropdowns below, then click Save.</p>
+
+    <div class="table-scroll scrollable">
+      <table class="feed-table mapping-table">
+        <thead>
+          <tr>
+            <th>Product Count</th>
+            <th>Unmapped Colour</th>
+            <th>Suggestion</th>
+            <th>Map to generic colour</th>
+            <th>Accept suggestion</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for _, row in unmapped.iterrows() %}
+          <tr class="mapping-unmapped-row" data-count="{{ row['Product Count'] }}">
+            <td class="cell-number">{{ '{:,}'.format(row['Product Count']) }}</td>
+            <td>
+              <input type="hidden" name="unmapped_colour" value="{{ row['Unmapped Colour'] }}">
+              {{ row['Unmapped Colour'] }}
+            </td>
+            <td>
+              {% if row['Suggestion'] %}
+              <span class="suggestion-chip">{{ row['Suggestion'] }}</span>
+              {% else %}
+              <span class="muted-inline">None</span>
+              {% endif %}
+            </td>
+            <td>
+              <select name="generic_colour_choice" class="filter-select-inline mapping-choice">
+                <option value="">Unmapped</option>
+                {% for g in allowed_generic %}
+                <option value="{{ g }}">{{ g }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <button type="button"
+                      class="btn btn-sm accept-suggestion-btn"
+                      data-suggestion="{{ row['Suggestion'] }}"
+                      {% if not row['Suggestion'] %}disabled{% endif %}>
+                Accept suggestion
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <hr class="mapping-divider">
+
+    <div class="mapping-progress-wrap"
+         data-currently="{{ currently_mapped_count }}"
+         data-newly="{{ newly_mapped_count }}"
+         data-unmapped="{{ unmapped_count }}"
+         data-eligible="{{ eligible_count }}">
+      <p class="section-caption" data-role="mapping-summary">
+        {{ pct_mapped }}% mapped ({{ '{:,}'.format(currently_mapped_count + newly_mapped_count) }} / {{ '{:,}'.format(eligible_count) }} colour values)
+      </p>
+      <div class="mapping-progress-bar" role="img" data-role="mapping-bar"
+           aria-label="Colour mapping progress: {{ pct_currently }} percent currently mapped, {{ pct_newly }} percent newly mapped, {{ pct_unmapped }} percent unmapped">
+        <div class="mapping-progress-segment mapping-progress-currently" data-role="seg-currently" style="width: {{ '%.4f'|format(pct_currently) }}%"></div>
+        <div class="mapping-progress-segment mapping-progress-newly" data-role="seg-newly" style="width: {{ '%.4f'|format(pct_newly) }}%"></div>
+        <div class="mapping-progress-segment mapping-progress-unmapped" data-role="seg-unmapped" style="width: {{ '%.4f'|format(pct_unmapped) }}%"></div>
+      </div>
+      <div class="mapping-progress-legend">
+        <span class="mapping-legend-item" data-role="legend-currently">
+          <span class="mapping-legend-swatch mapping-progress-currently"></span>
+          Currently mapped: <span data-role="legend-currently-count">{{ '{:,}'.format(currently_mapped_count) }}</span>
+        </span>
+        <span class="mapping-legend-item" data-role="legend-newly">
+          <span class="mapping-legend-swatch mapping-progress-newly"></span>
+          Newly mapped: <span data-role="legend-newly-count">{{ '{:,}'.format(newly_mapped_count) }}</span>
+        </span>
+        <span class="mapping-legend-item" data-role="legend-unmapped">
+          <span class="mapping-legend-swatch mapping-progress-unmapped"></span>
+          Unmapped: <span data-role="legend-unmapped-count">{{ '{:,}'.format(unmapped_count) }}</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Save colour mappings</button>
+      <button type="button" class="btn btn-sm accept-all-suggestions-btn">Accept all suggestions</button>
+      <span id="spinner-colour-map" class="htmx-indicator spinner">...</span>
+    </div>
+  </form>
+
+  <script>
+  (function () {
+    var section = document.getElementById('section-colour-mapping');
+    if (!section) return;
+
+    var form = section.querySelector('form[hx-post]');
+    var progress = section.querySelector('.mapping-progress-wrap');
+    if (!form || !progress) return;
+
+    var baseCurrently = parseInt(progress.dataset.currently || '0', 10) || 0;
+    var baseNewly = parseInt(progress.dataset.newly || '0', 10) || 0;
+    var baseUnmapped = parseInt(progress.dataset.unmapped || '0', 10) || 0;
+    var eligible = parseInt(progress.dataset.eligible || '0', 10) || 0;
+
+    var summary = section.querySelector('[data-role="mapping-summary"]');
+    var bar = section.querySelector('[data-role="mapping-bar"]');
+    var segCurrently = section.querySelector('[data-role="seg-currently"]');
+    var segNewly = section.querySelector('[data-role="seg-newly"]');
+    var segUnmapped = section.querySelector('[data-role="seg-unmapped"]');
+    var legendCurrentlyCount = section.querySelector('[data-role="legend-currently-count"]');
+    var legendNewlyCount = section.querySelector('[data-role="legend-newly-count"]');
+    var legendUnmappedCount = section.querySelector('[data-role="legend-unmapped-count"]');
+
+    function fmtInt(n) {
+      return Number(n || 0).toLocaleString('en-GB');
+    }
+
+    function pct(n) {
+      if (!eligible) return 0;
+      return (Number(n || 0) / eligible) * 100;
+    }
+
+    function renderPreview() {
+      var pending = 0;
+      var rows = form.querySelectorAll('tr.mapping-unmapped-row');
+
+      rows.forEach(function (row) {
+        var sel = row.querySelector('select.mapping-choice');
+        if (sel && String(sel.value || '').trim() !== '') {
+          pending += parseInt(row.dataset.count || '0', 10) || 0;
+        }
+      });
+
+      var currently = baseCurrently;
+      var newly = baseNewly + pending;
+      var unmapped = Math.max(baseUnmapped - pending, 0);
+
+      var pctCurrently = pct(currently);
+      var pctNewly = pct(newly);
+      var pctUnmapped = pct(unmapped);
+      var pctMapped = pct(currently + newly);
+
+      if (summary) {
+        summary.textContent = pctMapped.toFixed(2) + '% mapped (' + fmtInt(currently + newly) + ' / ' + fmtInt(eligible) + ' colour values)';
+      }
+      if (segCurrently) segCurrently.style.width = pctCurrently.toFixed(4) + '%';
+      if (segNewly) segNewly.style.width = pctNewly.toFixed(4) + '%';
+      if (segUnmapped) segUnmapped.style.width = pctUnmapped.toFixed(4) + '%';
+      if (legendCurrentlyCount) legendCurrentlyCount.textContent = fmtInt(currently);
+      if (legendNewlyCount) legendNewlyCount.textContent = fmtInt(newly);
+      if (legendUnmappedCount) legendUnmappedCount.textContent = fmtInt(unmapped);
+      if (bar) {
+        bar.setAttribute(
+          'aria-label',
+          'Colour mapping progress: ' +
+          pctCurrently.toFixed(2) + ' percent currently mapped, ' +
+          pctNewly.toFixed(2) + ' percent newly mapped, ' +
+          pctUnmapped.toFixed(2) + ' percent unmapped'
+        );
+      }
+    }
+
+    form.addEventListener('change', function (event) {
+      if (event.target && event.target.matches('select.mapping-choice')) {
+        renderPreview();
+      }
+    });
+
+    form.addEventListener('click', function (event) {
+      var btn = event.target && event.target.closest('.accept-suggestion-btn');
+      if (!btn) return;
+      var suggestion = String(btn.dataset.suggestion || '').trim();
+      if (!suggestion) return;
+      var row = btn.closest('tr.mapping-unmapped-row');
+      if (!row) return;
+      var sel = row.querySelector('select.mapping-choice');
+      if (!sel) return;
+      if ([].some.call(sel.options, function (o) { return o.value === suggestion; })) {
+        sel.value = suggestion;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+
+    form.addEventListener('click', function (event) {
+      var btn = event.target && event.target.closest('.accept-all-suggestions-btn');
+      if (!btn) return;
+      var rows = form.querySelectorAll('tr.mapping-unmapped-row');
+      rows.forEach(function (row) {
+        var singleBtn = row.querySelector('.accept-suggestion-btn');
+        if (!singleBtn) return;
+        var suggestion = String(singleBtn.dataset.suggestion || '').trim();
+        if (!suggestion) return;
+        var sel = row.querySelector('select.mapping-choice');
+        if (!sel) return;
+        if ([].some.call(sel.options, function (o) { return o.value === suggestion; })) {
+          sel.value = suggestion;
+        }
+      });
+      renderPreview();
+    });
+
+    renderPreview();
+  }());
+  </script>
+  {% endif %}
+
+  {% endif %}
+</section>

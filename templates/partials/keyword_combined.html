@@ -1,0 +1,39 @@
+<section class="section-card" id="section-keywords-combined">
+  <h3>9. Combined Keyword List</h3>
+  <p class="section-caption">All keyword lists stacked together — this is what gets sent to Google Ads.</p>
+
+  {% if combined_df is defined and combined_df is not none and combined_df | length > 0 %}
+  <p class="section-caption">{{ '{:,}'.format(total_keywords) }} total keywords (showing first {{ combined_df | length }}).</p>
+
+  <div class="table-scroll preview-table-wrap">
+    <table class="feed-table preview-table">
+      <thead><tr>{% for col in combined_df.columns %}<th>{{ col }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% set whole_cols = ['Product Count', 'Unique Product Groups', 'Clicks (28d)', 'Clicks Monthly Est', 'Total Quantity', 'Total Sales Value'] %}
+        {% for _, row in combined_df.iterrows() %}
+        <tr>
+          {% for col in combined_df.columns %}
+          {% set val = row[col] %}
+          <td>
+            {% if col in whole_cols %}
+            {{ val | fmt_whole }}
+            {% else %}
+            {{ val | string | truncate(80) }}
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="download-row">
+    <a href="{{ url_for('download_keywords_combined_csv') }}" class="btn btn-download">Download combined keywords (CSV)</a>
+    <a href="{{ url_for('download_keywords_combined_xlsx') }}" class="btn btn-download">Download combined keywords (Excel)</a>
+  </div>
+
+  {% else %}
+  <p class="section-caption">No keywords generated yet. Complete Section 9 first.</p>
+  {% endif %}
+</section>

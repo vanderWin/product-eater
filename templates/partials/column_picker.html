@@ -1,0 +1,73 @@
+<section class="section-card" id="section-column-picker">
+  <h3>1. Preview and Select Dimensions to Analyse</h3>
+  <p class="section-caption">Sense check the default columns ticked are enough for your analysis.</p>
+
+  <form hx-post="{{ url_for('step_columns') }}"
+        hx-target="#section-column-picker"
+        hx-swap="outerHTML"
+        hx-indicator="#spinner-columns">
+    <input type="hidden" name="action" value="update">
+
+    <div class="action-row">
+      <button type="submit" name="action" value="recommended" class="btn btn-sm">Select recommended</button>
+      <button type="submit" name="action" value="all" class="btn btn-sm">Select all</button>
+      <button type="submit" name="action" value="none" class="btn btn-sm">Select none</button>
+      <button type="submit" name="action" value="invert" class="btn btn-sm">Invert</button>
+      <span id="spinner-columns" class="htmx-indicator spinner">⏳</span>
+    </div>
+
+    <div class="table-scroll scrollable">
+      <table class="feed-table selector-table">
+        <thead>
+          <tr>
+            <th>Keep</th>
+            <th>Column</th>
+            <th>Example</th>
+            <th>Unique Values</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in selector_rows %}
+          <tr>
+            <td class="cell-checkbox">
+              <input type="checkbox" name="keep" value="{{ row.column }}"
+                     {% if row.keep %}checked{% endif %}
+                     onchange="this.form.action.value='update'">
+            </td>
+            <td>{{ row.column }}</td>
+            <td class="cell-example">{{ row.example | truncate(80) }}</td>
+            <td class="cell-number">{{ '{:,}'.format(row.unique) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <p class="section-caption">{{ keep_cols | length }} column(s) selected.</p>
+    <button type="submit" name="action" value="update" class="btn btn-primary">Apply column selection</button>
+  </form>
+
+  {% if preview_df is not none and preview_df | length > 0 %}
+  <h4>Preview (top {{ preview_df | length }} rows by clicks)</h4>
+  <div class="table-scroll preview-table-wrap">
+    <table class="feed-table preview-table">
+      <thead>
+        <tr>
+          {% for col in preview_df.columns %}
+          <th>{{ col }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for _, row in preview_df.iterrows() %}
+        <tr>
+          {% for val in row %}
+          <td>{{ val | string | truncate(60) }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>

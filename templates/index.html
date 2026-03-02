@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block content %}
+
+<p class="app-intro">This tool cleans and standardises product data from exported feeds.
+Upload a TSV or CSV, preview your columns, normalise key attributes, and download a refined dataset.</p>
+
+<!-- Instructions accordion -->
+<details class="instructions-card">
+  <summary>Instructions</summary>
+  <div class="instructions-body">
+    <p><strong>Getting started</strong></p>
+    <ul>
+      <li>Log into Merchant Center, navigate to the right client, open the Products tab, and export all products.</li>
+      <li>Unpack the archive Google gives you so you can access the TSV.</li>
+      <li>Browse for your TSV or drop it into the upload area below, then move through the sections.</li>
+    </ul>
+    <p><strong>Section 1: Preview and select columns</strong> — Pick the columns you need for analysis.</p>
+    <p><strong>Section 2: Filters</strong> — Filter to your market, availability, condition, etc.</p>
+    <p><strong>Section 3: Product grouping</strong> — Group SKUs into product groups via item_group_id or image URL.</p>
+    <p><strong>Section 4: Colour summary</strong> — Review colour distribution.</p>
+    <p><strong>Section 5: Colour mapping</strong> — Standardise brand colour names to generic colours.</p>
+    <p><strong>Section 6: Category extraction</strong> — Split product_type into first / penultimate / final segments.</p>
+    <p><strong>Section 7: Normalised feed download</strong> — Export the cleaned feed.</p>
+    <p><strong>Section 8: Keyword combinations</strong> — Combine fields to create keyword lists.</p>
+    <p><strong>Section 9: Combined keyword list</strong> — Review and export combined keywords.</p>
+    <p><strong>Section 10: Google Ads search volumes</strong> — Fetch monthly search volumes via the API.</p>
+    <p><strong>Section 11: Keywords + Google Ads metrics</strong> — Opportunity scoring and exports.</p>
+  </div>
+</details>
+
+<!-- Upload section -->
+<section class="section-card" id="section-upload">
+  <h2>Feed Preview &amp; Column Picker</h2>
+
+  <form method="POST" action="{{ url_for('upload') }}" enctype="multipart/form-data"
+        class="upload-form" id="upload-form">
+    <div class="form-group">
+      <label for="feed_file">Upload a feed file (TSV, CSV, or Excel)</label>
+      <input type="file" name="feed_file" id="feed_file"
+             accept=".tsv,.txt,.csv,.xlsx,.xls"
+             onchange="this.form.requestSubmit()">
+    </div>
+
+    {% if sheets %}
+    <div class="form-group">
+      <label for="sheet_name">Excel sheet</label>
+      <select name="sheet_name" id="sheet_name" onchange="this.form.requestSubmit()">
+        {% for s in sheets %}
+        <option value="{{ s }}" {% if s == sheet_name %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+  </form>
+
+  {% if has_file and show_column_picker %}
+  <div class="product-count-banner">
+    {{ '{:,}'.format(product_count) }} products found
+  </div>
+
+  <!-- Source file downloads -->
+  <div class="download-row">
+    <a href="{{ url_for('download_source_csv') }}" class="btn btn-download">Download CSV version</a>
+    <a href="{{ url_for('download_source_xlsx') }}" class="btn btn-download">Download Excel version</a>
+  </div>
+  {% endif %}
+</section>
+
+{% if has_file and show_column_picker %}
+
+<!-- Column picker (rendered inline after upload; becomes HTMX-refreshed after that) -->
+<div id="section-column-picker">
+  {% include "partials/column_picker.html" %}
+</div>
+
+<!-- All sections below are lazy-loaded via HTMX so they always reflect current state -->
+
+<div hx-get="{{ url_for('step_filters') }}" hx-trigger="load" hx-swap="outerHTML">
+  <section class="section-card" id="section-filters"><h3>2. Apply Filters</h3><p class="section-caption">Loading…</p></section>
+</div>
+
+<div hx-get="{{ url_for('step_groups') }}" hx-trigger="load" hx-swap="outerHTML">
+  <section class="section-card" id="section-groups"><h3>3. Product Groups</h3><p class="section-caption">Loading…</p></section>
+</div>
+
+<div hx-get="{{ url_for('step_colour_summary') }}" hx-trigger="load" hx-swap="outerHTML">
+  <section class="section-card" id="section-colour-summary"><h3>4. Colour Summary</h3><p class="section-caption">Loading…</p></section>
+</div>
+
+<div hx-get="{{ url_for('step_colour_mapping') }}" hx-trigger="load" hx-swap="outerHTML">
+  <section class="section-card" id="section-colour-mapping"><h3>5. Colour Mapping</h3><p class="section-caption">Loading…</p></section>
+</div>
+
+<div hx-get="{{ url_for('step_categories') }}" hx-trigger="load" hx-swap="outerHTML">
+  <section class="section-card" id="section-categories"><h3>6. Category Extraction</h3><p class="section-caption">Loading…</p></section>
+</div>
+
+<div hx-get="{{ url_for('step_normalised_feed') }}" hx-trigger="load" hx-swap="outerHTML">
+  <section class="section-card" id="section-normalised-feed"><h3>7. Download Normalised Feed</h3><p class="section-caption">Loading…</p></section>
+</div>
+
+<hr class="section-divider">
+
+<div hx-get="{{ url_for('step_keywords') }}" hx-trigger="load" hx-swap="outerHTML">
+  <section class="section-card" id="section-keywords"><h3>8. Keyword Combinations</h3><p class="section-caption">Loading…</p></section>
+</div>
+
+<div hx-get="{{ url_for('step_keywords_combined') }}" hx-trigger="load" hx-swap="outerHTML">
+  <section class="section-card" id="section-keywords-combined"><h3>9. Combined Keyword List</h3><p class="section-caption">Loading…</p></section>
+</div>
+
+<section class="section-card gads-card" id="section-gads-config">
+  <h3>10. Google Ads Search Volumes</h3><p class="section-caption">Loading…</p>
+</section>
+
+<!-- Populated only when user clicks Fetch — starts empty -->
+<section class="section-card gads-card" id="section-gads" style="display:none"></section>
+
+<!-- Populated only after fetch completes — starts empty -->
+<section class="section-card" id="section-charts" style="display:none"></section>
+
+{% elif not has_file %}
+<div class="info-banner">Upload a TSV, CSV, or Excel file to begin.</div>
+{% endif %}
+
+{% endblock %}
