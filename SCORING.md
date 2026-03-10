@@ -1,5 +1,7 @@
 # Opportunity Scoring Model
 
+> **Implementation:** `core/gads_opportunity.py` — Flask app, not Streamlit.
+
 This document explains how the Sales Opportunity Score is calculated, the rationale behind each component, and the design decisions we made along the way. Keep it updated when the model changes.
 
 ---

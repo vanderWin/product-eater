@@ -337,7 +337,7 @@ details[open] > .filter-summary::after { transform: rotate(-180deg); }
 }
 
 /* ── Charts ──────────────────────────────────────────────────────── */
-.chart-container { margin: 16px 0; min-height: 340px; }
+.chart-container { margin: 16px 0; position: relative; height: 340px; }
 
 /* ── HTMX spinner ────────────────────────────────────────────────── */
 .htmx-indicator { display: none; }

@@ -207,8 +207,8 @@ marimo/_lsp/
 __marimo__/
 
 
-# Streamlit local secrets
-.streamlit/secrets.toml
+# Streamlit (legacy — app migrated to Flask)
+.streamlit/
 
 # Google Ads & OAuth credentials — never commit these
 google-ads.yaml

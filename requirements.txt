@@ -8,4 +8,3 @@ google-ads>=24.0.0
 pyyaml>=6.0.1
 pyarrow>=14.0
 python-dotenv>=1.0
-watchdog>=4.0

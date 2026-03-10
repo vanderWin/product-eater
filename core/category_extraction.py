@@ -42,4 +42,8 @@ def preferred_category_column(df: pd.DataFrame) -> str | None:
     for name in ["google product category", "product type"]:
         if name in df.columns:
             return name
+    # Fall back to any column whose name contains "category"
+    for col in df.columns:
+        if "category" in col.lower():
+            return col
     return list(df.columns)[0] if df.columns.any() else None

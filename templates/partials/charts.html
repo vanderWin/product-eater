@@ -5,44 +5,18 @@
   <p class="info-banner">Fetch Google Ads volumes first to plot charts.</p>
   {% else %}
 
-  <form hx-post="{{ url_for('gads_charts') }}"
-        hx-target="#section-charts"
-        hx-swap="outerHTML"
-        hx-indicator="#spinner-charts">
+  <div class="chart-container">
+    <canvas id="chart-chronological"></canvas>
+  </div>
+  <script type="application/json" class="chartjs-spec" data-target="chart-chronological">
+    {{ chronological_spec | tojson | safe }}
+  </script>
 
-    <div class="form-group">
-      <label>Lists to plot</label>
-      <select name="chosen_lists" multiple class="filter-select" size="6">
-        {% for lst in all_lists %}
-        <option value="{{ lst }}" {% if lst in chosen_lists %}selected{% endif %}>{{ lst }}</option>
-        {% endfor %}
-      </select>
-    </div>
-
-    <div class="form-actions">
-      <button type="submit" class="btn btn-sm">Update charts</button>
-      <span id="spinner-charts" class="htmx-indicator spinner">⏳</span>
-    </div>
-  </form>
-
-  <div id="chart-chronological" class="chart-container"></div>
-  <div id="chart-seasonality" class="chart-container"></div>
-
-  <script>
-  (function () {
-    var specs = [
-      { id: 'chart-chronological', spec: {{ chronological_spec | tojson | safe }} },
-      { id: 'chart-seasonality',   spec: {{ seasonality_spec   | tojson | safe }} },
-    ];
-    function tryEmbed() {
-      if (typeof vegaEmbed === 'undefined') { setTimeout(tryEmbed, 100); return; }
-      specs.forEach(function (s) {
-        var el = document.getElementById(s.id);
-        if (el) vegaEmbed(el, s.spec, { actions: false }).catch(function (e) { console.error('vegaEmbed error:', e); });
-      });
-    }
-    tryEmbed();
-  }());
+  <div class="chart-container">
+    <canvas id="chart-seasonality"></canvas>
+  </div>
+  <script type="application/json" class="chartjs-spec" data-target="chart-seasonality">
+    {{ seasonality_spec | tojson | safe }}
   </script>
 
   {% endif %}

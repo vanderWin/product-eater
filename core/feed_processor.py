@@ -85,7 +85,7 @@ def count_products(df: pd.DataFrame) -> int:
     return len(df)
 
 
-def filter_options(df: pd.DataFrame, max_unique: int = 50) -> dict:
+def filter_options(df: pd.DataFrame, max_unique: int = 200) -> dict:
     """Return {col: [options]} for columns with 2..max_unique distinct values."""
     result = {}
     for col in df.columns:

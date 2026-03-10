@@ -64,12 +64,26 @@
                   hx-swap="outerHTML"
                   hx-trigger="change delay:200ms">
             <option value="">(none)</option>
-            {% for col in all_cols %}
+            {% if priority_cols %}
+            <optgroup label="— Key fields —">
+              {% for col in priority_cols %}
+              <option value="{{ col }}"
+                {% if slot < (combo.fields | length) and combo.fields[slot] == col %}selected{% endif %}>
+                {{ col }}{% if example_vals.get(col) %}: {{ example_vals[col] }}{% endif %}
+              </option>
+              {% endfor %}
+            </optgroup>
+            <optgroup label="— All fields —">
+            {% endif %}
+            {% for col in other_cols %}
             <option value="{{ col }}"
               {% if slot < (combo.fields | length) and combo.fields[slot] == col %}selected{% endif %}>
-              {{ col }}{% if example_vals.get(col) %} - {{ example_vals[col] }}{% endif %}
+              {{ col }}{% if example_vals.get(col) %}: {{ example_vals[col] }}{% endif %}
             </option>
             {% endfor %}
+            {% if priority_cols %}
+            </optgroup>
+            {% endif %}
           </select>
         </div>
         {% endfor %}

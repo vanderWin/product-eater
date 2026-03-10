@@ -369,7 +369,7 @@ def step_columns():
         preview_df=_clicks_sorted_preview(raw, kept),
     )
 
-    # OOB: refresh filter options to match new column selection
+    # OOB: refresh filter options and category extraction to match new column selection
     options = filter_options(kept)
     filters = session.get("filters", {})
     filtered = apply_filters(kept, filters)
@@ -383,7 +383,8 @@ def step_columns():
         preview_df=_clicks_sorted_preview(raw, filtered),
         _oob=True,
     )
-    return col_html + filter_html
+    categories_html = _render_categories_html(filtered)
+    return col_html + filter_html + _as_oob(categories_html, "section-categories")
 
 
 # ─── Step: Filters ────────────────────────────────────────────────────────────
@@ -601,6 +602,32 @@ def step_colour_mapping():
 
 # ─── Step: Category Extraction ────────────────────────────────────────────────
 
+def _render_categories_html(filtered: "pd.DataFrame") -> str:
+    """Render category_extraction.html using current session state."""
+    default_src = preferred_category_column(filtered)
+    cat_src_col = session.get("cat_src_col", default_src)
+    if cat_src_col not in filtered.columns:
+        cat_src_col = default_src
+    want_main = session.get("want_main", False)
+    want_penultimate = session.get("want_penultimate", False)
+    want_final = session.get("want_final", False)
+
+    preview_df = extract_categories(filtered, cat_src_col, want_main, want_penultimate, want_final)
+    preview_cols = [cat_src_col] + [
+        c for c in ["Main Category", "Penultimate Category", "Final Category"]
+        if c in preview_df.columns
+    ]
+    return render_template(
+        "partials/category_extraction.html",
+        all_cols=list(filtered.columns),
+        cat_src_col=cat_src_col,
+        want_main=want_main,
+        want_penultimate=want_penultimate,
+        want_final=want_final,
+        preview_df=preview_df[preview_cols].head(PREVIEW_ROWS),
+    )
+
+
 @app.route("/step/categories", methods=["GET", "POST"])
 def step_categories():
     raw = load_parquet(sid(), "raw_df")
@@ -612,48 +639,28 @@ def step_categories():
     kept = apply_column_selection(raw, keep_map)
     filtered = apply_filters(kept, filters)
 
-    default_src = preferred_category_column(filtered)
-
     if request.method == "POST":
+        default_src = preferred_category_column(filtered)
         cat_src_col = request.form.get("cat_src_col", default_src)
-        want_main = bool(request.form.get("want_main"))
-        want_penultimate = bool(request.form.get("want_penultimate"))
-        want_final = bool(request.form.get("want_final"))
-    else:
-        cat_src_col = session.get("cat_src_col", default_src)
-        want_main = session.get("want_main", False)
-        want_penultimate = session.get("want_penultimate", False)
-        want_final = session.get("want_final", False)
+        if cat_src_col not in filtered.columns:
+            cat_src_col = default_src
+        session["cat_src_col"] = cat_src_col
+        session["want_main"] = bool(request.form.get("want_main"))
+        session["want_penultimate"] = bool(request.form.get("want_penultimate"))
+        session["want_final"] = bool(request.form.get("want_final"))
+        session.modified = True
 
-    if cat_src_col not in filtered.columns:
-        cat_src_col = default_src
-
-    session["cat_src_col"] = cat_src_col
-    session["want_main"] = want_main
-    session["want_penultimate"] = want_penultimate
-    session["want_final"] = want_final
-    session.modified = True
-
-    preview_rows = PREVIEW_ROWS
-    preview_df = extract_categories(filtered, cat_src_col, want_main, want_penultimate, want_final)
-    preview_cols = [cat_src_col] + [
-        c for c in ["Main Category", "Penultimate Category", "Final Category"]
-        if c in preview_df.columns
-    ]
-
-    main_html = render_template(
-        "partials/category_extraction.html",
-        all_cols=list(filtered.columns),
-        cat_src_col=cat_src_col,
-        want_main=want_main,
-        want_penultimate=want_penultimate,
-        want_final=want_final,
-        preview_df=preview_df[preview_cols].head(preview_rows),
-    )
+    main_html = _render_categories_html(filtered)
 
     if request.method == "POST" and request.headers.get("HX-Request") == "true":
         normalised_html = step_normalised_feed()
-        return main_html + _as_oob(normalised_html, "section-normalised-feed")
+        processed_df = get_processed_df()
+        keywords_html = _render_keywords_html(processed_df) if processed_df is not None else ""
+        return (
+            main_html
+            + _as_oob(normalised_html, "section-normalised-feed")
+            + (_as_oob(keywords_html, "section-keywords") if keywords_html else "")
+        )
 
     return main_html
 
@@ -676,16 +683,31 @@ def step_normalised_feed():
 
 # ─── Step: Keyword Builder ────────────────────────────────────────────────────
 
-@app.route("/step/keywords", methods=["GET", "POST"])
-def step_keywords():
-    if request.headers.get("HX-Request") != "true":
-        return redirect(url_for("index"))
+_KEYWORD_PRIORITY_COLS = [
+    "Age Gender Segment",
+    "Normalised Colour",
+    "Main Category",
+    "Penultimate Category",
+    "Final Category",
+]
 
-    df = get_processed_df()
-    if df is None:
-        return redirect(url_for("index"))
+def _split_keyword_cols(cols: list) -> tuple[list, list]:
+    """Return (priority_cols, other_cols) with priority fields first."""
+    col_set = set(cols)
+    priority = [c for c in _KEYWORD_PRIORITY_COLS if c in col_set]
+    # Also surface any column named exactly "material" (case-insensitive)
+    for c in cols:
+        if c.lower() == "material" and c not in priority:
+            priority.append(c)
+    priority_set = set(priority)
+    other = [c for c in cols if c not in priority_set]
+    return priority, other
 
+
+def _render_keywords_html(df: "pd.DataFrame") -> str:
+    """Render keyword_builder.html using current session state and processed df."""
     all_cols = list(df.columns)
+    priority_cols, other_cols = _split_keyword_cols(all_cols)
     combos = session.get("combos", [{"fields": [], "name": ""}])
     legacy_field_alias = {
         "age_gender_segment": "Age Gender Segment",
@@ -703,7 +725,6 @@ def step_keywords():
         for c in combos
     ]
 
-    # Build example values from the top-clicked row
     raw = load_parquet(sid(), "raw_df")
     top_idx = _clicks_top_idx(raw) if raw is not None else None
     if top_idx is not None and top_idx in df.index:
@@ -719,7 +740,6 @@ def step_keywords():
             val = str(ex[col]).strip() if col in ex.index else ""
             example_vals[col] = "" if val.lower() in _skip else val[:50]
 
-    preview_rows = PREVIEW_ROWS
     per_list_tables = []
     per_list_display_cols = []
     combo_previews = []
@@ -735,8 +755,6 @@ def step_keywords():
             combo_previews.append(str(kc.iloc[0]["keyword"]))
         else:
             combo_previews.append("")
-        # Columns to show in section 8 preview: drop Clicks Monthly Est always;
-        # drop Unique Product Groups when it's identical to Product Count (no grouping configured).
         skip = {"Clicks Monthly Est"}
         if (
             "Unique Product Groups" in kc.columns
@@ -750,13 +768,27 @@ def step_keywords():
     return render_template(
         "partials/keyword_builder.html",
         all_cols=all_cols,
+        priority_cols=priority_cols,
+        other_cols=other_cols,
         combos=combos,
         per_list_tables=per_list_tables,
         per_list_display_cols=per_list_display_cols,
         combo_previews=combo_previews,
-        preview_rows=preview_rows,
+        preview_rows=PREVIEW_ROWS,
         example_vals=example_vals,
     )
+
+
+@app.route("/step/keywords", methods=["GET", "POST"])
+def step_keywords():
+    if request.headers.get("HX-Request") != "true":
+        return redirect(url_for("index"))
+
+    df = get_processed_df()
+    if df is None:
+        return redirect(url_for("index"))
+
+    return _render_keywords_html(df)
 
 
 _KEYWORD_PRESETS = [
@@ -1126,7 +1158,7 @@ def gads_results():
     )
 
 
-@app.route("/gads/charts", methods=["GET", "POST"])
+@app.route("/gads/charts")
 def gads_charts():
     combined_df = load_parquet(sid(), "combined_df")
     gads_df = load_parquet(sid(), "gads_df")
@@ -1138,22 +1170,12 @@ def gads_charts():
         return render_template("partials/charts.html", has_data=False)
 
     all_lists = totals["list_name"].tolist()
-    default_lists = all_lists[:6]
-
-    if request.method == "POST":
-        chosen_lists = request.form.getlist("chosen_lists") or default_lists
-    else:
-        chosen_lists = default_lists
-
-    legend_sort = chosen_lists or all_lists
-    chron_spec = chronological_spec(fv, chosen_lists, legend_sort)
-    season_spec = seasonality_spec(fv, chosen_lists, legend_sort)
+    chron_spec = chronological_spec(fv, all_lists, all_lists)
+    season_spec = seasonality_spec(fv, all_lists, all_lists)
 
     return render_template(
         "partials/charts.html",
         has_data=True,
-        all_lists=all_lists,
-        chosen_lists=chosen_lists,
         chronological_spec=chron_spec,
         seasonality_spec=season_spec,
     )
